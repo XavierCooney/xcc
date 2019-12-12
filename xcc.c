@@ -20,6 +20,7 @@
         ENUMERATE_TOKEN(WORD_RETURN) \
         ENUMERATE_TOKEN(TIDLE) \
         ENUMERATE_TOKEN(MINUS) \
+        ENUMERATE_TOKEN(NOT) \
         ENUMERATE_TOKEN(T_EOF) \
         ENUMERATE_TOKEN(UNKNOWN) \
 
@@ -145,6 +146,8 @@ void characterise_token() {
         current_token_type = TOK_TIDLE;
     } else if(tok_is_single_char('-')) {
         current_token_type = TOK_MINUS;
+    } else if(tok_is_single_char('!')) {
+        current_token_type = TOK_NOT;
     } else {
         current_token_type = TOK_NO_TOK;
     }
@@ -317,6 +320,11 @@ void parse_unary_expression() {
     } else if(accept(TOK_MINUS)) {
         parse_unary_expression();
         emit_line("neg %rax", "unary negation operator", true);
+    } else if(accept(TOK_NOT)) {
+        parse_unary_expression();
+        emit_line("cmpq $0, %rax", "unary not operator", true);
+        emit_line("movq $0, %rax", "unary not operator (zero out)", true);
+        emit_line("setz %al", "unary not operator (set if ZF, upper bits already zerod)", true);
     } else {
         parse_primary_expression();
     }
