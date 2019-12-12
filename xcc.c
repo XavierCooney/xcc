@@ -291,9 +291,9 @@ bool accept(int expected) {
     }
 }
 
-void parse_assert_impl(bool condition, const char *msg) {
+void parse_assert_impl(bool condition, const char *msg, int line) {
     if(!condition) {
-        fputs("Parse error near token ", stderr);
+        fprintf(stderr, "Parse error (on compiler line %d) near token ", line);
         fputs(current_token_expansion, stderr);
         fputs(" around line ", stderr);
         fprintf(stderr, "%d: ", current_line_num);
@@ -303,8 +303,8 @@ void parse_assert_impl(bool condition, const char *msg) {
     }
 }
 
-#define parse_assert(condition) parse_assert_impl(condition, #condition)
-#define expect(token_type) parse_assert_impl(accept(token_type), "expected " #token_type)
+#define parse_assert(condition) parse_assert_impl(condition, #condition " on line ", __LINE__)
+#define expect(token_type) parse_assert_impl(accept(token_type), "expected " #token_type, __LINE__)
 
 void parse_primary_expression() {
     parse_assert(current_token_type == TOK_NUM);
@@ -341,6 +341,26 @@ void parse_unary_expression() {
 
 void parse_multiplication_expression() {
     parse_unary_expression();
+    while(current_token_type == TOK_STAR || current_token_type == TOK_SLASH) {
+        bool is_times;
+        if(accept(TOK_STAR)) {
+            is_times = true;
+        } else {
+            expect(TOK_SLASH);
+            is_times = false;
+        }
+        emit_line("pushq %rax", "save rax for multiplication/division", true);
+        parse_unary_expression();
+        if(is_times) {
+            emit_line("popq %rcx", "retrieve first operand for multiplication", true);
+            emit_line("imulq %rcx, %rax", "perform multiplication", true);
+        } else {
+            emit_line("movq %rax, %rcx", "place divisor into rcx", true);
+            emit_line("popq %rax", "retrieve dividend from stack", true);
+            emit_line("cqto", "sign extend rax to rdx:rax for divison", true);
+            emit_line("idiv %rcx", "perform division", true);
+        }
+    }
 }
 
 void parse_addition_expression() {
