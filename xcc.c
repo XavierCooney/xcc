@@ -268,7 +268,7 @@ void expect(int token_type) {
     parse_assert(accept(token_type));
 }
 
-void parse_expression() {
+void parse_primary_expression() {
     parse_assert(current_token_type == TOK_NUM);
 
     emit_partial_indent();
@@ -278,6 +278,42 @@ void parse_expression() {
     emit_partial_explanation("load integer literal into rax");
 
     expect(TOK_NUM);
+}
+
+void parse_call_expr() {
+    parse_primary_expression();
+}
+
+void parse_unary_expression() {
+    parse_call_expr();
+}
+
+void parse_multiplication_expression() {
+    parse_unary_expression();
+}
+
+void parse_addition_expression() {
+    parse_multiplication_expression();
+}
+
+void parse_comparison_expression() {
+    parse_addition_expression();
+}
+
+void parse_equality_expression() {
+    parse_comparison_expression();
+}
+
+void parse_and_expression() {
+    parse_equality_expression();
+}
+
+void parse_or_expression() {
+    parse_and_expression();
+}
+
+void parse_expression() {
+    parse_or_expression();
 }
 
 void parse_statement() {
