@@ -307,19 +307,19 @@ void parse_primary_expression() {
 }
 
 void parse_call_expr() {
+    parse_primary_expression();
+}
+
+void parse_unary_expression() {
     if(accept(TOK_TIDLE)) {
-        parse_call_expr();
+        parse_unary_expression();
         emit_line("not %rax", "bitwise not operator", true);
     } else if(accept(TOK_MINUS)) {
-        parse_call_expr();
+        parse_unary_expression();
         emit_line("neg %rax", "unary negation operator", true);
     } else {
         parse_primary_expression();
     }
-}
-
-void parse_unary_expression() {
-    parse_call_expr();
 }
 
 void parse_multiplication_expression() {
