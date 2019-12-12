@@ -18,6 +18,7 @@
         ENUMERATE_TOKEN(WHITESPACE) \
         ENUMERATE_TOKEN(WORD_INT) \
         ENUMERATE_TOKEN(WORD_RETURN) \
+        ENUMERATE_TOKEN(TIDLE) \
         ENUMERATE_TOKEN(T_EOF) \
         ENUMERATE_TOKEN(UNKNOWN) \
 
@@ -136,6 +137,8 @@ void characterise_token() {
         current_token_type = TOK_WHITESPACE;
     } else if(tok_is_single_char(EOF)) {
         current_token_type = TOK_T_EOF;
+    } else if(tok_is_single_char('~')) {
+        current_token_type = TOK_TIDLE;
     } else {
         current_token_type = TOK_NO_TOK;
     }
@@ -281,7 +284,12 @@ void parse_primary_expression() {
 }
 
 void parse_call_expr() {
-    parse_primary_expression();
+    if(accept(TOK_TIDLE)) {
+        parse_call_expr();
+        emit_line("not %rax", "bitwise not operator", true);
+    } else {
+        parse_primary_expression();
+    }
 }
 
 void parse_unary_expression() {
