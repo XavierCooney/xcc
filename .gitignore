@@ -1,0 +1,3 @@
+assembly.S
+test_out
+xcc
