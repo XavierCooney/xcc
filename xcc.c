@@ -53,6 +53,9 @@ int current_token_contents[MAX_TOK_LEN + 5];
 char current_token_expansion[MAX_TOK_EXPANSION_LEN + 10];
 int current_token_type;
 
+int current_line_num = 1;
+int current_col_num = 0;
+
 void expand_token() {
     int contents_offset = 0;
     int expansion_offset = 0;
@@ -192,7 +195,14 @@ void lex_token() {
                 }
             }
         } else {
-            current_token_contents[++current_token_len] = read_char();
+            char c = read_char();
+            if(c == '\n') {
+                ++current_line_num;
+                current_col_num = 0;
+            } else {
+                ++current_col_num;
+            }
+            current_token_contents[++current_token_len] = c;
             current_token_contents[current_token_len + 1] = '\0';
             assert(current_token_len < MAX_TOK_LEN);
         }
@@ -213,13 +223,20 @@ const char *resolve_token_name(int token) {
 #define STRINGIFIED_IMPL(x) #x
 #define STRINGIFIED(x) STRINGIFIED_IMPL(x)
 
+void emit_src_location() {
+    printf("[ %d:%d ]", current_line_num, current_col_num);
+}
+
 void emit_line(const char *assembly, const char *explanation, bool indent) {
     assert(strlen(assembly) <  indent ? ASSEMBLY_LINE_LENGTH_INDENTED : ASSEMBLY_LINE_LENGTH);
     if(indent) {
-        printf("    %-" STRINGIFIED(ASSEMBLY_LINE_LENGTH_INDENTED) "s # %s\n", assembly, explanation);
+        printf("    %-" STRINGIFIED(ASSEMBLY_LINE_LENGTH_INDENTED) "s", assembly);
     } else {
-        printf("%-" STRINGIFIED(ASSEMBLY_LINE_LENGTH) "s # %s\n", assembly, explanation);
+        printf("%-" STRINGIFIED(ASSEMBLY_LINE_LENGTH) "s", assembly);
     }
+    printf(" # ");
+    emit_src_location();
+    printf(" %s\n", explanation);
 }
 
 int current_partial_line_len = 0;
@@ -244,7 +261,8 @@ void emit_partial_explanation(const char *explanation) {
         ++current_partial_line_len;
     }
     printf(" # ");
-    printf("%s\n", explanation);
+    emit_src_location();
+    printf(" %s\n", explanation);
     current_partial_line_len = 0;
 }
 
@@ -265,6 +283,8 @@ void parse_assert(bool condition) {
     if(!condition) {
         fputs("Parse error near token ", stderr);
         fputs(current_token_expansion, stderr);
+        fputs(" around line ", stderr);
+        fprintf(stderr, "%d", current_line_num);
         fputs("\n", stderr);
         assert(false);
     }
@@ -332,12 +352,9 @@ void parse_expression() {
 
 void parse_statement() {
     expect(TOK_WORD_RETURN);
-
     parse_expression();
-
-    emit_line("ret", "return from func", true);
-
     expect(TOK_SEMI);
+    emit_line("ret", "return statement", true);
 }
 
 void parse_function() {
@@ -361,6 +378,8 @@ void parse_function() {
     }
 
     expect(TOK_R_BRACE);
+
+    emit_line("ret", "no-return-path return", true);
 }
 
 void parse_program() {
