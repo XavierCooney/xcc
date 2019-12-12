@@ -19,7 +19,10 @@
         ENUMERATE_TOKEN(WORD_INT) \
         ENUMERATE_TOKEN(WORD_RETURN) \
         ENUMERATE_TOKEN(TIDLE) \
+        ENUMERATE_TOKEN(PLUS) \
         ENUMERATE_TOKEN(MINUS) \
+        ENUMERATE_TOKEN(STAR) \
+        ENUMERATE_TOKEN(SLASH) \
         ENUMERATE_TOKEN(NOT) \
         ENUMERATE_TOKEN(T_EOF) \
         ENUMERATE_TOKEN(UNKNOWN) \
@@ -144,8 +147,14 @@ void characterise_token() {
         current_token_type = TOK_T_EOF;
     } else if(tok_is_single_char('~')) {
         current_token_type = TOK_TIDLE;
+    } else if(tok_is_single_char('+')) {
+        current_token_type = TOK_PLUS;
     } else if(tok_is_single_char('-')) {
         current_token_type = TOK_MINUS;
+    } else if(tok_is_single_char('*')) {
+        current_token_type = TOK_STAR;
+    } else if(tok_is_single_char('/')) {
+        current_token_type = TOK_SLASH;
     } else if(tok_is_single_char('!')) {
         current_token_type = TOK_NOT;
     } else {
@@ -282,20 +291,20 @@ bool accept(int expected) {
     }
 }
 
-void parse_assert(bool condition) {
+void parse_assert_impl(bool condition, const char *msg) {
     if(!condition) {
         fputs("Parse error near token ", stderr);
         fputs(current_token_expansion, stderr);
         fputs(" around line ", stderr);
-        fprintf(stderr, "%d", current_line_num);
+        fprintf(stderr, "%d: ", current_line_num);
+        fputs(msg, stderr);
         fputs("\n", stderr);
         assert(false);
     }
 }
 
-void expect(int token_type) {
-    parse_assert(accept(token_type));
-}
+#define parse_assert(condition) parse_assert_impl(condition, #condition)
+#define expect(token_type) parse_assert_impl(accept(token_type), "expected " #token_type)
 
 void parse_primary_expression() {
     parse_assert(current_token_type == TOK_NUM);
@@ -336,6 +345,25 @@ void parse_multiplication_expression() {
 
 void parse_addition_expression() {
     parse_multiplication_expression();
+    while(current_token_type == TOK_PLUS || current_token_type == TOK_MINUS) {
+        bool is_plus;
+        if(accept(TOK_PLUS)) {
+            is_plus = true;
+        } else {
+            expect(TOK_MINUS);
+            is_plus = false;
+        }
+        emit_line("pushq %rax", "save rax for addition/subtraction", true);
+        parse_multiplication_expression();
+        if(is_plus) {
+            emit_line("popq %rcx", "retrieve first operand for addition/subtraction", true);
+            emit_line("addq %rcx, %rax", "perform subtraction", true);
+        } else {
+            emit_line("movq %rax, %rcx", "move first operand for subtraction", true);
+            emit_line("popq %rax", "retrieve first operand for subtraction", true);
+            emit_line("subq %rcx, %rax", "perform subtraction", true);
+        }
+    }
 }
 
 void parse_comparison_expression() {
