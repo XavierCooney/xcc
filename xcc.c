@@ -24,6 +24,7 @@
         ENUMERATE_TOKEN(STAR) \
         ENUMERATE_TOKEN(SLASH) \
         ENUMERATE_TOKEN(NOT) \
+        ENUMERATE_TOKEN(EQUALS) \
         ENUMERATE_TOKEN(T_EOF) \
         ENUMERATE_TOKEN(UNKNOWN) \
 
@@ -157,6 +158,8 @@ void characterise_token() {
         current_token_type = TOK_SLASH;
     } else if(tok_is_single_char('!')) {
         current_token_type = TOK_NOT;
+    } else if(tok_is_single_char('=')) {
+        current_token_type = TOK_EQUALS;
     } else {
         current_token_type = TOK_NO_TOK;
     }
@@ -278,6 +281,11 @@ void emit_partial_explanation(const char *explanation) {
     current_partial_line_len = 0;
 }
 
+void emit_epilogue() {
+    emit_line("movq %rbp, %rsp", "function epilogue", true);
+    emit_line("popq %rbp", "function epilogue", true);
+}
+
 void advance() {
     lex_token();
 }
@@ -306,16 +314,57 @@ void parse_assert_impl(bool condition, const char *msg, int line) {
 #define parse_assert(condition) parse_assert_impl(condition, #condition " on line ", __LINE__)
 #define expect(token_type) parse_assert_impl(accept(token_type), "expected " #token_type, __LINE__)
 
+#define STACK_VARIABLES_MAX_LEN 800
+
+#define MAX_VAR_LEN 40
+
+struct {
+    int base_pointer_offset;
+    char var_name[MAX_VAR_LEN + 1];
+} stack_variables[STACK_VARIABLES_MAX_LEN + 1];
+
+int stack_variables_length = 0;
+
+void parse_expression();
+
+
 void parse_primary_expression() {
-    parse_assert(current_token_type == TOK_NUM);
-
-    emit_partial_indent();
-    emit_partial_asm("movq $");
-    emit_partial_asm(current_token_expansion);
-    emit_partial_asm(", %rax");
-    emit_partial_explanation("load integer literal into rax");
-
-    expect(TOK_NUM);
+    if(current_token_type == TOK_NUM) {
+        emit_partial_indent();
+        emit_partial_asm("movq $");
+        emit_partial_asm(current_token_expansion);
+        emit_partial_asm(", %rax");
+        emit_partial_explanation("load integer literal into rax");
+        expect(TOK_NUM);
+    } else if(current_token_type == TOK_IDENT) {
+        int required_offset;
+        for(int i = stack_variables_length; i >= 0; --i) {
+            if(!strcmp(stack_variables[i].var_name, current_token_expansion)) {
+                required_offset = stack_variables[i].base_pointer_offset;
+                break;
+            }
+        }
+        expect(TOK_IDENT);
+        // really bad place in parser, higher precedence than anything but whatever
+        if(accept(TOK_EQUALS)) {
+            parse_expression();
+            emit_partial_indent();
+            emit_partial_asm("movq %rax, ");
+            emit_partial_num(required_offset);
+            emit_partial_asm("(%rbp)");
+            emit_partial_explanation("variable set");
+        } else {
+            emit_partial_indent();
+            emit_partial_asm("movq ");
+            emit_partial_num(required_offset);
+            emit_partial_asm("(%rbp), %rax");
+            emit_partial_explanation("variable reference");
+        }
+    } else {
+        expect(TOK_L_PAREN);
+        parse_expression();
+        expect(TOK_R_PAREN);
+    }
 }
 
 void parse_call_expr() {
@@ -335,7 +384,7 @@ void parse_unary_expression() {
         emit_line("movq $0, %rax", "unary not operator (zero out)", true);
         emit_line("setz %al", "unary not operator (set if ZF, upper bits already zerod)", true);
     } else {
-        parse_primary_expression();
+        parse_call_expr();
     }
 }
 
@@ -407,13 +456,42 @@ void parse_expression() {
 }
 
 void parse_statement() {
-    expect(TOK_WORD_RETURN);
-    parse_expression();
-    expect(TOK_SEMI);
-    emit_line("ret", "return statement", true);
+    if(accept(TOK_WORD_RETURN)) {
+        parse_expression();
+        expect(TOK_SEMI);
+
+        emit_epilogue();
+        emit_line("ret", "return statement", true);
+    } else if(accept(TOK_WORD_INT)) {
+        parse_assert(current_token_type == TOK_IDENT);
+
+        strncpy(stack_variables[stack_variables_length].var_name, current_token_expansion, MAX_VAR_LEN);
+        stack_variables[stack_variables_length].var_name[MAX_VAR_LEN - 1] = '\0';
+        int base_ptr_offset = -8;
+        if(stack_variables_length) {
+            base_ptr_offset = stack_variables[stack_variables_length - 1].base_pointer_offset - 8;
+        }
+        stack_variables[stack_variables_length].base_pointer_offset = base_ptr_offset;
+
+        expect(TOK_IDENT);
+        if(accept(TOK_EQUALS)) {
+            parse_expression();
+        } else {
+            emit_line("movq $0x4242, %rax", "load default uninitialised value to new var", true);
+        }
+        emit_line("pushq %rax", "save initial value of new variable onto stack", true);
+
+        stack_variables_length += 1;
+        expect(TOK_SEMI);
+    } else {
+        parse_expression();
+        expect(TOK_SEMI);
+    }
 }
 
 void parse_function() {
+    stack_variables_length = 0;
+
     char func_name[TOK_EXPANSION_BUF_LEN];
     expect(TOK_WORD_INT);
 
@@ -422,6 +500,9 @@ void parse_function() {
     emit_partial_asm(func_name);
     emit_partial_asm(":");
     emit_partial_explanation("function label");
+    emit_line("pushq %rbp", "function prologue", true);
+    emit_line("movq %rsp, %rbp", "function prologue", true);
+
     expect(TOK_IDENT);
 
     expect(TOK_L_PAREN);
@@ -435,6 +516,7 @@ void parse_function() {
 
     expect(TOK_R_BRACE);
 
+    emit_epilogue();
     emit_line("ret", "no-return-path return", true);
 }
 
