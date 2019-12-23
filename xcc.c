@@ -18,6 +18,8 @@
         ENUMERATE_TOKEN(WHITESPACE) \
         ENUMERATE_TOKEN(WORD_INT) \
         ENUMERATE_TOKEN(WORD_RETURN) \
+        ENUMERATE_TOKEN(WORD_IF) \
+        ENUMERATE_TOKEN(WORD_ELSE) \
         ENUMERATE_TOKEN(TIDLE) \
         ENUMERATE_TOKEN(PLUS) \
         ENUMERATE_TOKEN(MINUS) \
@@ -25,6 +27,8 @@
         ENUMERATE_TOKEN(SLASH) \
         ENUMERATE_TOKEN(NOT) \
         ENUMERATE_TOKEN(EQUALS) \
+        ENUMERATE_TOKEN(DOUBLE_EQUALS) \
+        ENUMERATE_TOKEN(EXCLAMATION_EQUALS) \
         ENUMERATE_TOKEN(T_EOF) \
         ENUMERATE_TOKEN(UNKNOWN) \
 
@@ -126,6 +130,10 @@ void characterise_token() {
         current_token_type = TOK_WORD_INT;
     } else if(tok_is_keyword("return")) {
         current_token_type = TOK_WORD_RETURN;
+    } else if(tok_is_keyword("if")) {
+        current_token_type = TOK_WORD_IF;
+    } else if(tok_is_keyword("else")) {
+        current_token_type = TOK_WORD_ELSE;
     } else if(tok_is_ident()) {
         current_token_type = TOK_IDENT;
     } else if(tok_is_single_char('(')) {
@@ -160,6 +168,10 @@ void characterise_token() {
         current_token_type = TOK_NOT;
     } else if(tok_is_single_char('=')) {
         current_token_type = TOK_EQUALS;
+    } else if(tok_is_keyword("==")) { 
+        current_token_type = TOK_DOUBLE_EQUALS;
+    } else if(tok_is_keyword("!=")) { 
+        current_token_type = TOK_EXCLAMATION_EQUALS;
     } else {
         current_token_type = TOK_NO_TOK;
     }
@@ -284,6 +296,11 @@ void emit_partial_explanation(const char *explanation) {
 void emit_epilogue() {
     emit_line("movq %rbp, %rsp", "function epilogue", true);
     emit_line("popq %rbp", "function epilogue", true);
+}
+
+int current_local_label_num = 1;
+int generate_local_label() {
+    return ++current_local_label_num;
 }
 
 void advance() {
@@ -426,7 +443,7 @@ void parse_addition_expression() {
         parse_multiplication_expression();
         if(is_plus) {
             emit_line("popq %rcx", "retrieve first operand for addition/subtraction", true);
-            emit_line("addq %rcx, %rax", "perform subtraction", true);
+            emit_line("addq %rcx, %rax", "perform addidition", true);
         } else {
             emit_line("movq %rax, %rcx", "move first operand for subtraction", true);
             emit_line("popq %rax", "retrieve first operand for subtraction", true);
@@ -441,6 +458,28 @@ void parse_comparison_expression() {
 
 void parse_equality_expression() {
     parse_comparison_expression();
+
+    while(current_token_type == TOK_DOUBLE_EQUALS || current_token_type == TOK_EXCLAMATION_EQUALS) {
+        bool was_equality;
+        if(accept(TOK_DOUBLE_EQUALS)) {
+            was_equality = true;
+        } else {
+            expect(TOK_EXCLAMATION_EQUALS);
+            was_equality = false;
+        }
+
+        emit_line("pushq %rax", "save rax for double equals", true);
+        parse_comparison_expression();
+        emit_line("popq %rdx", "retrieve first operand", true);
+        emit_line("cmpq %rax, %rdx", "compare first and second operand in (in)equality", true);
+        emit_line("movq $0, %rax", "set %rax to false in prep for inequality", true);
+
+        if(was_equality) {
+            emit_line("sete %al", "set if equal", true);
+        } else {
+            emit_line("setne %al", "set if not equal", true);
+        }
+    }
 }
 
 void parse_and_expression() {
@@ -453,6 +492,29 @@ void parse_or_expression() {
 
 void parse_expression() {
     parse_or_expression();
+}
+
+void parse_statement();
+
+void parse_blocks_inner() {
+    int outer_stack_length = stack_variables_length;
+    while(current_token_type != TOK_R_BRACE && current_token_type != TOK_T_EOF) {
+        parse_statement();
+    }
+    if(stack_variables_length != outer_stack_length) {
+        stack_variables_length = outer_stack_length;
+        // adjust rsp to what is was before by calculating what
+        // its offset from rbp should be
+        int rsp_offset = 0;
+        if(stack_variables_length) {
+            rsp_offset = stack_variables[stack_variables_length].base_pointer_offset;
+        }
+        emit_partial_indent();
+        emit_partial_asm("lea ");
+        emit_partial_num(rsp_offset);
+        emit_partial_asm("(%rbp), %rsp");
+        emit_partial_explanation("restore stack frame after block");
+    }
 }
 
 void parse_statement() {
@@ -483,6 +545,60 @@ void parse_statement() {
 
         stack_variables_length += 1;
         expect(TOK_SEMI);
+    } else if(accept(TOK_WORD_IF)) {
+        /*
+            if(a) {
+                b
+            } else {
+                c
+            }
+        */
+        int expr_not_true_label = generate_local_label();
+
+        expect(TOK_L_PAREN);
+        parse_expression();
+        expect(TOK_R_PAREN);
+
+        emit_line("testq %rax, %rax", "set ZF is %rax is 0", true);
+        emit_partial_indent();
+        emit_partial_asm("jz .L");
+        emit_partial_num(expr_not_true_label);
+        emit_partial_explanation("jump if result of if expression is not true");
+
+        expect(TOK_L_BRACE);
+        parse_blocks_inner();
+        expect(TOK_R_BRACE);
+
+        if(accept(TOK_WORD_ELSE)) {
+            int expr_is_true_label = generate_local_label();
+
+            emit_partial_indent();
+            emit_partial_asm("jmp .L");
+            emit_partial_num(expr_is_true_label);
+            emit_partial_explanation("jump if result of if expression is not true");
+
+            emit_partial_asm(".L");
+            emit_partial_num(expr_not_true_label);
+            emit_partial_asm(":");
+            emit_partial_explanation("jump dest if result of if expression is not true");
+
+            expect(TOK_L_BRACE);
+            parse_blocks_inner();
+            expect(TOK_R_BRACE);
+
+            emit_partial_asm(".L");
+            emit_partial_num(expr_is_true_label);
+            emit_partial_asm(":");
+            emit_partial_explanation(
+                "jump dest if result of if expression "
+                "is true and needs to skip past else"
+            );
+        } else {
+            emit_partial_asm(".L");
+            emit_partial_num(expr_not_true_label);
+            emit_partial_asm(":");
+            emit_partial_explanation("jump dest if result of if expression is not true");
+        }
     } else {
         parse_expression();
         expect(TOK_SEMI);
@@ -510,9 +626,7 @@ void parse_function() {
 
     expect(TOK_L_BRACE);
 
-    while(current_token_type != TOK_R_BRACE) {
-        parse_statement();
-    }
+    parse_blocks_inner();
 
     expect(TOK_R_BRACE);
 
