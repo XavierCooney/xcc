@@ -507,7 +507,7 @@ void parse_blocks_inner() {
         // its offset from rbp should be
         int rsp_offset = 0;
         if(stack_variables_length) {
-            rsp_offset = stack_variables[stack_variables_length].base_pointer_offset;
+            rsp_offset = stack_variables[stack_variables_length - 1].base_pointer_offset;
         }
         emit_partial_indent();
         emit_partial_asm("lea ");
