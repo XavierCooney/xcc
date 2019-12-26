@@ -731,6 +731,7 @@ void parse_function() {
                 base_ptr_offset = stack_variables[stack_variables_length - 1].base_pointer_offset - 8;
             }
             stack_variables[stack_variables_length].base_pointer_offset = base_ptr_offset;
+            stack_variables_length += 1;
             if(i == 0) { // FROM ABI
                 emit_line("pushq %rdi", "push first param to stack", true);
             } else if(i == 1) {
