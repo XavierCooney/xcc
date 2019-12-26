@@ -129,7 +129,7 @@ bool tok_is_keyword(const char *keyword) {
 
 void characterise_token() {
     expand_token(); // for keyword checking, not ideal
-    if(tok_is_keyword("int")) {
+    if(tok_is_keyword("int") || tok_is_keyword("i64")) {
         current_token_type = TOK_WORD_INT;
     } else if(tok_is_keyword("return")) {
         current_token_type = TOK_WORD_RETURN;
