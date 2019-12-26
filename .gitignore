@@ -1,3 +1,5 @@
 assembly.S
-test_out
+test_*
 xcc
+out
+*.o
