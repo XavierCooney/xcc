@@ -1,3 +1,4 @@
+// test comment
 int putchar(int c);
 
 int supplement_assert(int condition);

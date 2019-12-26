@@ -56,7 +56,7 @@ struct {
 };
 
 
-#define MAX_TOK_LEN 80
+#define MAX_TOK_LEN 1600
 #define MAX_TOK_EXPANSION_LEN 120
 
 int last_non_accepted_char = '\0';
@@ -123,6 +123,23 @@ bool tok_is_whitespace() {
     return tok_is_single_char(' ') || tok_is_single_char('\n') || tok_is_single_char('\t') || tok_is_single_char('\r');
 }
 
+bool tok_is_comment() {
+    if(current_token_contents[0] == '/') {
+        if(current_token_contents[1] == '\0') {
+            return true;
+        } else if(current_token_contents[1] == '/') {
+            int i = 2;
+            while(current_token_contents[i] && current_token_contents[i - 1] != '\n') {
+                ++i;
+            }
+            return current_token_contents[i] == '\0';
+        } else {
+            return false;
+        }
+    }
+    return false;
+}
+
 bool tok_is_keyword(const char *keyword) {
     return !strcmp(current_token_expansion, keyword);
 }
@@ -153,8 +170,6 @@ void characterise_token() {
         current_token_type = TOK_NUM;
     } else if(tok_is_whitespace()) {
         current_token_type = TOK_WHITESPACE;
-    } else if(tok_is_whitespace()) {
-        current_token_type = TOK_WHITESPACE;
     } else if(tok_is_single_char(EOF)) {
         current_token_type = TOK_T_EOF;
     } else if(tok_is_single_char('~')) {
@@ -177,6 +192,8 @@ void characterise_token() {
         current_token_type = TOK_EXCLAMATION_EQUALS;
     } else if(tok_is_single_char(',')) { 
         current_token_type = TOK_COMMA;
+    } else if(tok_is_comment()) {
+        current_token_type = TOK_WHITESPACE;
     } else {
         current_token_type = TOK_NO_TOK;
     }
