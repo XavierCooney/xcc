@@ -340,9 +340,11 @@ bool accept(int expected) {
 
 void parse_assert_impl(bool condition, const char *msg, int line) {
     if(!condition) {
-        fprintf(stderr, "Parse error (on compiler line %d) near token ", line);
+        fprintf(stderr, "Parse error (on compiler line %d) near token '", line);
         fputs(current_token_expansion, stderr);
-        fputs(" around line ", stderr);
+        fputs("' (", stderr);
+        fputs(resolve_token_name(current_token_type), stderr);
+        fputs(") around line ", stderr);
         fprintf(stderr, "%d: ", current_line_num);
         fputs(msg, stderr);
         fputs("\n", stderr);
