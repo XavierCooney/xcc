@@ -1,3 +1,4 @@
+.PHONY: all
 all: out
 
 
@@ -24,4 +25,4 @@ supplement.o: supplement.c
 	gcc supplement.c -ggdb -O0 -Wall -Werror -c -o supplement.o
 
 out: assembly.S supplement.o
-	gcc assembly.S supplement.o -o out
+	gcc assembly.S supplement.o -o out -no-pie

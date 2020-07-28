@@ -6,6 +6,8 @@ int supplement_print_int(int v);
 int supplement_print_nl();
 int supplement_print_char(int c);
 
+int fib(int n);
+
 int hello_world() {
     putchar(72);
     putchar(101);
@@ -42,6 +44,28 @@ int do_basic_arithmetic_test() {
     supplement_assert(!0);
     supplement_assert(!!3);
     supplement_assert(!!3 == 1);
+
+    supplement_assert(7 <= 8);
+    supplement_assert(7 < 8);
+    supplement_assert(8 <= 8);
+    supplement_assert(!(8 < 8));
+    supplement_assert(!(9 < 8));
+    supplement_assert(!(9 <= 8));
+
+    supplement_assert(3 > 0 - 7);
+    supplement_assert(3 > -7);
+    supplement_assert(3 >= 0 - 7);
+    supplement_assert(3 >= -7);
+
+    supplement_assert(8 >= 7);
+    supplement_assert(8 > 7);
+    supplement_assert(8 >= 8);
+    supplement_assert(!(8 > 8));
+    supplement_assert(!(8 > 9));
+    supplement_assert(!(8 >= 9));
+
+    supplement_assert(-4 > -10);
+    supplement_assert(-4 >= -4);
 }
 
 int do_var_test() {
@@ -72,7 +96,16 @@ int do_var_test() {
 int do_test() {
     do_basic_arithmetic_test();
     do_var_test();
+    supplement_assert(fib(21) == 10946);
     supplement_print_nl();
+}
+
+int fib(int n) {
+    if(n <= 1) {
+        return n;
+    } else {
+        return fib(n - 1) + fib(n - 2);
+    }
 }
 
 int main() {

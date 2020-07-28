@@ -5,7 +5,6 @@
 #include <string.h>
 
 
-// cool macro idea from Serenity OS
 #define ENUMERATE_TOKENS    \
         ENUMERATE_TOKEN(NO_TOK) \
         ENUMERATE_TOKEN(IDENT) \
@@ -26,6 +25,10 @@
         ENUMERATE_TOKEN(STAR) \
         ENUMERATE_TOKEN(SLASH) \
         ENUMERATE_TOKEN(NOT) \
+        ENUMERATE_TOKEN(LT) \
+        ENUMERATE_TOKEN(GT) \
+        ENUMERATE_TOKEN(LT_EQ) \
+        ENUMERATE_TOKEN(GT_EQ) \
         ENUMERATE_TOKEN(EQUALS) \
         ENUMERATE_TOKEN(DOUBLE_EQUALS) \
         ENUMERATE_TOKEN(COMMA) \
@@ -186,11 +189,19 @@ void characterise_token() {
         current_token_type = TOK_NOT;
     } else if(tok_is_single_char('=')) {
         current_token_type = TOK_EQUALS;
-    } else if(tok_is_keyword("==")) { 
+    } else if(tok_is_keyword("==")) {
         current_token_type = TOK_DOUBLE_EQUALS;
-    } else if(tok_is_keyword("!=")) { 
+    } else if(tok_is_keyword("!=")) {
         current_token_type = TOK_EXCLAMATION_EQUALS;
-    } else if(tok_is_single_char(',')) { 
+    } else if(tok_is_keyword("<=")) {
+        current_token_type = TOK_LT_EQ;
+    } else if(tok_is_keyword(">=")) {
+        current_token_type = TOK_GT_EQ;
+    } else if(tok_is_single_char('<')) {
+        current_token_type = TOK_LT;
+    } else if(tok_is_single_char('>')) {
+        current_token_type = TOK_GT;
+    } else if(tok_is_single_char(',')) {
         current_token_type = TOK_COMMA;
     } else if(tok_is_comment()) {
         current_token_type = TOK_WHITESPACE;
@@ -277,7 +288,7 @@ void emit_src_location() {
 }
 
 void emit_line(const char *assembly, const char *explanation, bool indent) {
-    assert(strlen(assembly) <  indent ? ASSEMBLY_LINE_LENGTH_INDENTED : ASSEMBLY_LINE_LENGTH);
+    assert(strlen(assembly) < (indent ? ASSEMBLY_LINE_LENGTH_INDENTED : ASSEMBLY_LINE_LENGTH));
     if(indent) {
         printf("    %-" STRINGIFIED(ASSEMBLY_LINE_LENGTH_INDENTED) "s", assembly);
     } else {
@@ -539,6 +550,45 @@ void parse_addition_expression() {
 
 void parse_comparison_expression() {
     parse_addition_expression();
+
+    while(current_token_type == TOK_LT_EQ || current_token_type == TOK_LT || current_token_type == TOK_GT || current_token_type == TOK_GT_EQ) {
+        bool was_eq;
+        bool was_lt;
+
+        if(accept(TOK_LT_EQ)) {
+            was_eq = true;
+            was_lt = true;
+        } else if(accept(TOK_LT)) {
+            was_eq = false;
+            was_lt = true;
+        } else if(accept(TOK_GT_EQ)) {
+            was_eq = true;
+            was_lt = false;
+        } else {
+            expect(TOK_GT);
+            was_eq = false;
+            was_lt = false;
+        }
+
+        emit_line("pushq %rax", "save rax for equality", true);
+        parse_addition_expression();
+        emit_line("popq %rdx", "retrieve first operand", true);
+        emit_line("cmpq %rax, %rdx", "compare first and second operand in (in)equality", true);
+        emit_line("movq $0, %rax", "set %rax to false in prep for inequality", true);
+
+        emit_partial_indent();
+        emit_partial_asm("set");
+        if(was_lt) {
+            emit_partial_asm("l");
+        } else {
+            emit_partial_asm("g");
+        }
+        if(was_eq) {
+            emit_partial_asm("e");
+        }
+        emit_partial_asm(" %al");
+        emit_partial_explanation("set according to comparison");
+    }
 }
 
 void parse_equality_expression() {
@@ -553,7 +603,7 @@ void parse_equality_expression() {
             was_equality = false;
         }
 
-        emit_line("pushq %rax", "save rax for double equals", true);
+        emit_line("pushq %rax", "save rax for equality", true);
         parse_comparison_expression();
         emit_line("popq %rdx", "retrieve first operand", true);
         emit_line("cmpq %rax, %rdx", "compare first and second operand in (in)equality", true);

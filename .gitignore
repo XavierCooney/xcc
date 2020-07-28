@@ -1,4 +1,4 @@
-assembly.S
+assembly*.S
 test_*
 xcc
 out
