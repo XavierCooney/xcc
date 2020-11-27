@@ -93,12 +93,6 @@ int do_var_test() {
     supplement_assert(c == 12);
 }
 
-int do_test() {
-    do_basic_arithmetic_test();
-    do_var_test();
-    supplement_assert(fib(21) == 10946);
-    supplement_print_nl();
-}
 
 int fib(int n) {
     if(n <= 1) {
@@ -106,6 +100,59 @@ int fib(int n) {
     } else {
         return fib(n - 1) + fib(n - 2);
     }
+}
+
+int do_while_test_1() {
+    int total = 3;
+    int i = 10;
+    while(i < 17) {
+        total = total + i;
+        i = i + 3;
+    }
+    supplement_assert(total == 42); // 3 + 10 + 13 + 16
+}
+
+int do_while_test_2() {
+    // check case of 0 loops
+    int foo = 1;
+    while(2 > 3) {
+        foo = 2;
+    }
+    supplement_assert(foo == 1);
+}
+
+int identifier_test() {
+    int _ = 0;
+    int a = 1;
+    int ab = 2;
+    int c7 = 3;
+
+    supplement_assert(_ == 0);
+    supplement_assert(a == 1);
+    supplement_assert(ab == 2);
+    supplement_assert(c7 == 3);
+}
+
+int argument_passing_test_inner(int a, int b, int c, int d, int e) {
+    supplement_assert(a == 1);
+    supplement_assert(b == 2);
+    supplement_assert(c == 3);
+    supplement_assert(d == 4);
+    supplement_assert(e == 5);
+}
+
+int argument_passing_test() {
+    argument_passing_test_inner(1, 2, 3, 4, 5);
+}
+
+int do_test() {
+    do_basic_arithmetic_test();
+    do_var_test();
+    supplement_assert(fib(21) == 10946);
+    do_while_test_1();
+    do_while_test_2();
+    identifier_test();
+    supplement_print_nl();
 }
 
 int main() {

@@ -19,7 +19,8 @@
         ENUMERATE_TOKEN(WORD_RETURN) \
         ENUMERATE_TOKEN(WORD_IF) \
         ENUMERATE_TOKEN(WORD_ELSE) \
-        ENUMERATE_TOKEN(TIDLE) \
+        ENUMERATE_TOKEN(WORD_WHILE) \
+        ENUMERATE_TOKEN(TILDE) \
         ENUMERATE_TOKEN(PLUS) \
         ENUMERATE_TOKEN(MINUS) \
         ENUMERATE_TOKEN(STAR) \
@@ -102,13 +103,13 @@ bool tok_is_single_char(int c) {
     return current_token_contents[0] == c && !current_token_contents[1];
 }
 
-bool char_is_ident(int c) {
-    return ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z') || c == '_';
+bool char_is_ident(int c, bool first_char) {
+    return ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z') || c == '_' || (!first_char && '0' <= c && c <= '9');
 }
 
 bool tok_is_ident() {
     int i = 0;
-    while(char_is_ident(current_token_contents[i])) {
+    while(char_is_ident(current_token_contents[i], i == 0)) {
         ++i;
     }
     return i > 0 && current_token_contents[i] == '\0';
@@ -157,6 +158,8 @@ void characterise_token() {
         current_token_type = TOK_WORD_IF;
     } else if(tok_is_keyword("else")) {
         current_token_type = TOK_WORD_ELSE;
+    } else if(tok_is_keyword("while")) {
+        current_token_type = TOK_WORD_WHILE;
     } else if(tok_is_ident()) {
         current_token_type = TOK_IDENT;
     } else if(tok_is_single_char('(')) {
@@ -176,7 +179,7 @@ void characterise_token() {
     } else if(tok_is_single_char(EOF)) {
         current_token_type = TOK_T_EOF;
     } else if(tok_is_single_char('~')) {
-        current_token_type = TOK_TIDLE;
+        current_token_type = TOK_TILDE;
     } else if(tok_is_single_char('+')) {
         current_token_type = TOK_PLUS;
     } else if(tok_is_single_char('-')) {
@@ -359,7 +362,7 @@ void parse_assert_impl(bool condition, const char *msg, int line) {
         fprintf(stderr, "%d: ", current_line_num);
         fputs(msg, stderr);
         fputs("\n", stderr);
-        assert(false);
+        exit(1);
     }
 }
 
@@ -414,7 +417,10 @@ void parse_primary_expression() {
                     break;
                 }
             }
-            parse_assert(found_func);
+            if(!found_func) {
+                fprintf(stderr, "Function `%s` not found!\n", ident_contents);
+                parse_assert(found_func);
+            }
 
             int arg_num = 0;
             while(current_token_type != TOK_R_PAREN && current_token_type != TOK_T_EOF) {
@@ -459,7 +465,10 @@ void parse_primary_expression() {
                     break;
                 }
             }
-            parse_assert(found_var);
+            if(!found_var) {
+                fprintf(stderr, "Variable `%s` not found!\n", ident_contents);
+                parse_assert(found_var);
+            }
 
             // really bad place in parser, higher precedence than anything but whatever
             if(accept(TOK_EQUALS)) {
@@ -485,7 +494,7 @@ void parse_primary_expression() {
 }
 
 void parse_unary_expression() {
-    if(accept(TOK_TIDLE)) {
+    if(accept(TOK_TILDE)) {
         parse_unary_expression();
         emit_line("not %rax", "bitwise not operator", true);
     } else if(accept(TOK_MINUS)) {
@@ -734,6 +743,43 @@ void parse_statement() {
             emit_partial_asm(":");
             emit_partial_explanation("jump dest if result of if expression is not true");
         }
+    } else if(accept(TOK_WORD_WHILE)) {
+        /*
+            while(a) {
+                b
+            }
+        */
+        int start_of_loop_label = generate_local_label();
+        int end_of_loop_label = generate_local_label();
+
+        emit_partial_asm(".L");
+        emit_partial_num(start_of_loop_label);
+        emit_partial_asm(":");
+        emit_partial_explanation("jump dest for start of loop");
+
+        expect(TOK_L_PAREN);
+        parse_expression();
+        expect(TOK_R_PAREN);
+
+        emit_line("testq %rax, %rax", "set ZF if %rax is 0", true);
+        emit_partial_indent();
+        emit_partial_asm("jz .L");
+        emit_partial_num(end_of_loop_label);
+        emit_partial_explanation("jump to escape while loop");
+
+        expect(TOK_L_BRACE);
+        parse_blocks_inner();
+        expect(TOK_R_BRACE);
+
+        emit_partial_indent();
+        emit_partial_asm("jmp .L");
+        emit_partial_num(start_of_loop_label);
+        emit_partial_explanation("jump to start of loop");
+
+        emit_partial_asm(".L");
+        emit_partial_num(end_of_loop_label);
+        emit_partial_asm(":");
+        emit_partial_explanation("jump dest for end of while loop");
     } else {
         parse_expression();
         expect(TOK_SEMI);
