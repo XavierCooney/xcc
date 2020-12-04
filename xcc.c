@@ -329,10 +329,160 @@ void emit_partial_explanation(const char *explanation) {
     current_partial_line_len = 0;
 }
 
+void parse_assert_impl(bool condition, const char *msg, int line) {
+    if(!condition) {
+        fprintf(stderr, "Parse error (on compiler line %d) near token '", line);
+        expand_token();
+        fputs(current_token_expansion, stderr);
+        fputs("' (", stderr);
+        fputs(resolve_token_name(current_token_type), stderr);
+        fputs(") around line ", stderr);
+        fprintf(stderr, "%d: ", current_line_num);
+        fputs(msg, stderr);
+        fputs("\n", stderr);
+        assert(false); // triggers debugger break becasue of SIGABRT
+        // exit(1);
+    }
+}
+
+#define parse_assert(condition) parse_assert_impl(condition, #condition " on line ", __LINE__)
+
 void emit_epilogue() {
     emit_line("movq %rbp, %rsp", "function epilogue", true);
     emit_line("popq %rbp", "function epilogue", true);
 }
+
+#define NUM_TYPES 2048
+
+enum TypeType {
+    TypeInteger, TypePointer
+};
+struct Type {
+    int type_type; // TypeType
+    int underlying_type_num; // for pointers
+    int type_size; // for pointers and integral types, in bytes
+} types[NUM_TYPES];
+int next_type_id = 0;
+
+void type_print_to_stderr(int type_id) {
+    if(type_id < 0 || type_id >= next_type_id) {
+        fprintf(stderr, "<invalid type with id %d>", type_id);
+        return;
+    }
+
+    int type_type = types[type_id].type_type;
+    if(type_type == TypeInteger) {
+        fprintf(stderr, "i%d", types[type_id].type_size * 8);
+    } else if(type_type == TypePointer) {
+        type_print_to_stderr(types[type_id].underlying_type_num);
+        fputs("*", stderr);
+    } else {
+        assert(false);
+    }
+}
+
+int type_get_or_create_integer(int width_in_bytes) {
+    for(int existing_id = 0; existing_id < next_type_id; ++existing_id) {
+        if(types[existing_id].type_size == width_in_bytes && types[existing_id].type_type == TypeInteger) {
+            return existing_id;
+        }
+    }
+
+    assert(next_type_id < NUM_TYPES);
+    types[next_type_id].type_size = width_in_bytes;
+    types[next_type_id].type_type = TypeInteger;
+    types[next_type_id].underlying_type_num = -1;
+
+    next_type_id++;
+    return next_type_id - 1;
+}
+
+
+#define VALUE_STACK_SIZE 512
+
+enum ValueType {
+    // all the places the result of a computation
+    // could be
+    ValueTypeConstant, // the value is just a constant equal to data
+    ValueTypeStack, // the value is an offset (data) from the base pointer
+    ValueTypeMemory, // the value is in memory pointed to by the value in the value stack indexed by data
+    ValueTypeRAX, // it's in the rax constant
+    ValueTypeLabel, // the value is the address of a label (label number data) in memory
+};
+
+struct Value {
+    int value_type; // ValueType
+    int data; // The corresponding data depending on value_type
+    int type_id;
+} value_stack[VALUE_STACK_SIZE];
+int next_value_stack_entry_num = 0;
+
+int type_i64; // initialised in main()
+
+void val_pop_rvalue_rax() {
+    int value_pos_in_stack = next_value_stack_entry_num - 1;
+    assert(value_pos_in_stack >= 0);
+    int value_type = value_stack[value_pos_in_stack].value_type;
+
+    if(value_type == ValueTypeConstant) {
+        emit_partial_indent();
+        emit_partial_asm("movq $");
+        emit_partial_num(value_stack[value_pos_in_stack].data);
+        emit_partial_asm(", %rax");
+        emit_partial_explanation("load constant value from value stack");
+        next_value_stack_entry_num--;
+    } else if(value_type == ValueTypeStack) {
+        emit_partial_indent();
+        emit_partial_asm("movq ");
+        emit_partial_num(value_stack[value_pos_in_stack].data);
+        emit_partial_asm("(%rbp), %rax");
+        emit_partial_explanation("load value at offset to %rbp from value stack");
+        next_value_stack_entry_num--;
+    } else if(value_type == ValueTypeMemory) {
+        int underlying_value_index = value_stack[value_pos_in_stack].data;
+        parse_assert(underlying_value_index == value_pos_in_stack - 1);
+        next_value_stack_entry_num--; // pop off value stack so pointer can be placed into %rax
+
+        val_pop_rvalue_rax();
+        // the pointer to the value should now be in %rax
+
+        emit_line("movq (%rax), %rax", "derefence value", true);
+        next_value_stack_entry_num--;
+    } else if(value_type == ValueTypeRAX) {
+        // well that was easy...
+        next_value_stack_entry_num--;
+    } else if(value_type == ValueTypeRAX) {
+        emit_line("movq (%rax), %rax", "derefence value", true);
+        next_value_stack_entry_num--;
+    } else {
+        assert(false);
+    }
+}
+
+void val_place_constant(int value, int type_id) {
+    assert(next_value_stack_entry_num < VALUE_STACK_SIZE);
+    value_stack[next_value_stack_entry_num].type_id = type_id;
+    value_stack[next_value_stack_entry_num].value_type = ValueTypeConstant;
+    value_stack[next_value_stack_entry_num].data = value;
+    next_value_stack_entry_num++;
+}
+
+void val_place_stack_var(int stack_offset, int type_id) {
+    assert(next_value_stack_entry_num < VALUE_STACK_SIZE);
+    value_stack[next_value_stack_entry_num].type_id = type_id;
+    value_stack[next_value_stack_entry_num].value_type = ValueTypeStack;
+    value_stack[next_value_stack_entry_num].data = stack_offset;
+    next_value_stack_entry_num++;
+}
+
+void val_place_rax(int type_id) {
+    assert(next_value_stack_entry_num < VALUE_STACK_SIZE);
+    value_stack[next_value_stack_entry_num].type_id = type_id;
+    value_stack[next_value_stack_entry_num].value_type = ValueTypeRAX;
+    value_stack[next_value_stack_entry_num].data = -1;
+    next_value_stack_entry_num++;
+}
+
 
 int current_local_label_num = 1;
 int generate_local_label() {
@@ -352,21 +502,6 @@ bool accept(int expected) {
     }
 }
 
-void parse_assert_impl(bool condition, const char *msg, int line) {
-    if(!condition) {
-        fprintf(stderr, "Parse error (on compiler line %d) near token '", line);
-        fputs(current_token_expansion, stderr);
-        fputs("' (", stderr);
-        fputs(resolve_token_name(current_token_type), stderr);
-        fputs(") around line ", stderr);
-        fprintf(stderr, "%d: ", current_line_num);
-        fputs(msg, stderr);
-        fputs("\n", stderr);
-        exit(1);
-    }
-}
-
-#define parse_assert(condition) parse_assert_impl(condition, #condition " on line ", __LINE__)
 #define expect(token_type) parse_assert_impl(accept(token_type), "expected " #token_type, __LINE__)
 
 #define VAR_LIST_MAX_LEN 800
@@ -393,11 +528,8 @@ void parse_expression();
 
 void parse_primary_expression() {
     if(current_token_type == TOK_NUM) {
-        emit_partial_indent();
-        emit_partial_asm("movq $");
-        emit_partial_asm(current_token_expansion);
-        emit_partial_asm(", %rax");
-        emit_partial_explanation("load integer literal into rax");
+        int literal_value = atoi(current_token_expansion);
+        val_place_constant(literal_value, type_i64);
         expect(TOK_NUM);
     } else if(current_token_type == TOK_IDENT) {
         char ident_contents[TOK_EXPANSION_BUF_LEN];
@@ -425,6 +557,7 @@ void parse_primary_expression() {
             int arg_num = 0;
             while(current_token_type != TOK_R_PAREN && current_token_type != TOK_T_EOF) {
                 parse_expression();
+                val_pop_rvalue_rax();
                 if(arg_num == 0) {
                     emit_line("movq %rax, %rdi", "load first param of func call", true);
                 } else if(arg_num == 1) {
@@ -437,8 +570,8 @@ void parse_primary_expression() {
                     emit_line("movq %rax, %r8", "load fifth param of func call", true);
                 } else if(arg_num == 5) {
                     emit_line("movq %rax, %r9", "load sixth param of func call", true);
-                } else if(arg_num == 6) {
-                    assert(false); // TODO
+                } else if(arg_num >= 6) {
+                    assert(false); // TODO, place paramaters onto stack
                 }
                 if(current_token_type != TOK_R_PAREN) {
                     expect(TOK_COMMA);
@@ -446,14 +579,13 @@ void parse_primary_expression() {
                 ++arg_num;
             }
             expect(TOK_R_PAREN);
+            parse_assert(arg_num == num_args);
 
             emit_partial_indent();
             emit_partial_asm("call ");
             emit_partial_asm(ident_contents);
             emit_partial_explanation("invoke function");
-
-            parse_assert(arg_num == num_args);
-            // result ends up in %rax
+            val_place_rax(type_i64);
         } else {
             // local variable
             int required_offset;
@@ -470,21 +602,7 @@ void parse_primary_expression() {
                 parse_assert(found_var);
             }
 
-            // really bad place in parser, higher precedence than anything but whatever
-            if(accept(TOK_EQUALS)) {
-                parse_expression();
-                emit_partial_indent();
-                emit_partial_asm("movq %rax, ");
-                emit_partial_num(required_offset);
-                emit_partial_asm("(%rbp)");
-                emit_partial_explanation("variable set");
-            } else {
-                emit_partial_indent();
-                emit_partial_asm("movq ");
-                emit_partial_num(required_offset);
-                emit_partial_asm("(%rbp), %rax");
-                emit_partial_explanation("variable reference");
-            }
+            val_place_stack_var(required_offset, type_i64);
         }
     } else {
         expect(TOK_L_PAREN);
@@ -496,15 +614,21 @@ void parse_primary_expression() {
 void parse_unary_expression() {
     if(accept(TOK_TILDE)) {
         parse_unary_expression();
+        val_pop_rvalue_rax();
         emit_line("not %rax", "bitwise not operator", true);
+        val_place_rax(type_i64);
     } else if(accept(TOK_MINUS)) {
         parse_unary_expression();
+        val_pop_rvalue_rax();
         emit_line("neg %rax", "unary negation operator", true);
+        val_place_rax(type_i64);
     } else if(accept(TOK_NOT)) {
         parse_unary_expression();
+        val_pop_rvalue_rax();
         emit_line("cmpq $0, %rax", "unary not operator", true);
         emit_line("movq $0, %rax", "unary not operator (zero out)", true);
         emit_line("setz %al", "unary not operator (set if ZF, upper bits already zerod)", true);
+        val_place_rax(type_i64);
     } else {
         parse_primary_expression();
     }
@@ -520,8 +644,10 @@ void parse_multiplication_expression() {
             expect(TOK_SLASH);
             is_times = false;
         }
+        val_pop_rvalue_rax();
         emit_line("pushq %rax", "save rax for multiplication/division", true);
         parse_unary_expression();
+        val_pop_rvalue_rax();
         if(is_times) {
             emit_line("popq %rcx", "retrieve first operand for multiplication", true);
             emit_line("imulq %rcx, %rax", "perform multiplication", true);
@@ -531,6 +657,7 @@ void parse_multiplication_expression() {
             emit_line("cqto", "sign extend rax to rdx:rax for divison", true);
             emit_line("idiv %rcx", "perform division", true);
         }
+        val_place_rax(type_i64);
     }
 }
 
@@ -544,8 +671,10 @@ void parse_addition_expression() {
             expect(TOK_MINUS);
             is_plus = false;
         }
+        val_pop_rvalue_rax();
         emit_line("pushq %rax", "save rax for addition/subtraction", true);
         parse_multiplication_expression();
+        val_pop_rvalue_rax();
         if(is_plus) {
             emit_line("popq %rcx", "retrieve first operand for addition/subtraction", true);
             emit_line("addq %rcx, %rax", "perform addidition", true);
@@ -554,33 +683,44 @@ void parse_addition_expression() {
             emit_line("popq %rax", "retrieve first operand for subtraction", true);
             emit_line("subq %rcx, %rax", "perform subtraction", true);
         }
+        val_place_rax(type_i64);
     }
 }
 
 void parse_comparison_expression() {
     parse_addition_expression();
 
-    while(current_token_type == TOK_LT_EQ || current_token_type == TOK_LT || current_token_type == TOK_GT || current_token_type == TOK_GT_EQ) {
-        bool was_eq;
-        bool was_lt;
+    while(current_token_type == TOK_LT_EQ || current_token_type == TOK_LT
+            || current_token_type == TOK_GT || current_token_type == TOK_GT_EQ
+            || current_token_type == TOK_DOUBLE_EQUALS
+            || current_token_type == TOK_EXCLAMATION_EQUALS) {
+        bool was_eq = false;
+        bool was_lt = false;
+        bool was_gt = false;
+        bool was_not = false;
 
         if(accept(TOK_LT_EQ)) {
             was_eq = true;
             was_lt = true;
         } else if(accept(TOK_LT)) {
-            was_eq = false;
             was_lt = true;
         } else if(accept(TOK_GT_EQ)) {
+            was_gt = true;
             was_eq = true;
-            was_lt = false;
+        } else if(accept(TOK_GT)) {
+            was_gt = true;
+        } else if(accept(TOK_DOUBLE_EQUALS)) {
+            was_eq = true;
         } else {
-            expect(TOK_GT);
-            was_eq = false;
-            was_lt = false;
+            expect(TOK_EXCLAMATION_EQUALS);
+            was_not = true;
+            was_eq = true;
         }
 
+        val_pop_rvalue_rax();
         emit_line("pushq %rax", "save rax for equality", true);
         parse_addition_expression();
+        val_pop_rvalue_rax();
         emit_line("popq %rdx", "retrieve first operand", true);
         emit_line("cmpq %rax, %rdx", "compare first and second operand in (in)equality", true);
         emit_line("movq $0, %rax", "set %rax to false in prep for inequality", true);
@@ -589,53 +729,70 @@ void parse_comparison_expression() {
         emit_partial_asm("set");
         if(was_lt) {
             emit_partial_asm("l");
-        } else {
+        }
+        if(was_gt) {
             emit_partial_asm("g");
+        }
+        if(was_not) {
+            emit_partial_asm("n");
         }
         if(was_eq) {
             emit_partial_asm("e");
         }
         emit_partial_asm(" %al");
         emit_partial_explanation("set according to comparison");
-    }
-}
-
-void parse_equality_expression() {
-    parse_comparison_expression();
-
-    while(current_token_type == TOK_DOUBLE_EQUALS || current_token_type == TOK_EXCLAMATION_EQUALS) {
-        bool was_equality;
-        if(accept(TOK_DOUBLE_EQUALS)) {
-            was_equality = true;
-        } else {
-            expect(TOK_EXCLAMATION_EQUALS);
-            was_equality = false;
-        }
-
-        emit_line("pushq %rax", "save rax for equality", true);
-        parse_comparison_expression();
-        emit_line("popq %rdx", "retrieve first operand", true);
-        emit_line("cmpq %rax, %rdx", "compare first and second operand in (in)equality", true);
-        emit_line("movq $0, %rax", "set %rax to false in prep for inequality", true);
-
-        if(was_equality) {
-            emit_line("sete %al", "set if equal", true);
-        } else {
-            emit_line("setne %al", "set if not equal", true);
-        }
+        val_place_rax(type_i64);
     }
 }
 
 void parse_and_expression() {
-    parse_equality_expression();
+    parse_comparison_expression();
 }
 
 void parse_or_expression() {
     parse_and_expression();
 }
 
-void parse_expression() {
+void parse_assignment_expression() {
     parse_or_expression();
+
+    // TODO: allow constructs such as
+    //      int a, b
+    //      a = b = 3;
+    // This is non-trivial because
+    // it requres right-associativity
+    if(accept(TOK_EQUALS)) {
+        // Rather than making a value pop function for lvalues
+        // and spaghettifying even more,
+        // just handle each case distinctly here.
+        // when I implement ++, +=, etc. I'll need
+        // to either handle only variables (which is the only case
+        // in this code base), or re-jig the design a bit.
+
+        int top_value_index = next_value_stack_entry_num - 1;
+        next_value_stack_entry_num--;
+        int top_value_value_type = value_stack[top_value_index].value_type;
+        int top_value_data = value_stack[top_value_index].data;
+
+        if(top_value_value_type == ValueTypeStack) {
+            parse_or_expression();
+            val_pop_rvalue_rax();
+
+            emit_partial_indent();
+            emit_partial_asm("movq %rax, ");
+            emit_partial_num(top_value_data);
+            emit_partial_asm("(%rbp)");
+            emit_partial_explanation("variable set");
+
+            val_place_rax(type_i64);
+        } else {
+            assert(false);
+        }
+    }
+}
+
+void parse_expression() {
+    parse_assignment_expression();
 }
 
 void parse_statement();
@@ -661,9 +818,18 @@ void parse_blocks_inner() {
     }
 }
 
+void pop_val_stack_to_0() {
+    if(next_value_stack_entry_num != 1) {
+        fprintf(stderr, "Value stack is offset: %d!\n", next_value_stack_entry_num);
+        parse_assert(next_value_stack_entry_num == 1);
+    }
+    next_value_stack_entry_num = 0;
+}
+
 void parse_statement() {
     if(accept(TOK_WORD_RETURN)) {
         parse_expression();
+        val_pop_rvalue_rax();
         expect(TOK_SEMI);
 
         emit_epilogue();
@@ -682,6 +848,7 @@ void parse_statement() {
         expect(TOK_IDENT);
         if(accept(TOK_EQUALS)) {
             parse_expression();
+            val_pop_rvalue_rax();
         } else {
             emit_line("movq $0x4242, %rax", "load default uninitialised value to new var", true);
         }
@@ -701,6 +868,7 @@ void parse_statement() {
 
         expect(TOK_L_PAREN);
         parse_expression();
+        val_pop_rvalue_rax();
         expect(TOK_R_PAREN);
 
         emit_line("testq %rax, %rax", "set ZF if %rax is 0", true);
@@ -759,6 +927,7 @@ void parse_statement() {
 
         expect(TOK_L_PAREN);
         parse_expression();
+        val_pop_rvalue_rax();
         expect(TOK_R_PAREN);
 
         emit_line("testq %rax, %rax", "set ZF if %rax is 0", true);
@@ -783,6 +952,7 @@ void parse_statement() {
     } else {
         parse_expression();
         expect(TOK_SEMI);
+        pop_val_stack_to_0();
     }
 }
 
@@ -890,6 +1060,8 @@ void parse_program() {
 }
 
 int main(int argc, char const *argv[]) {
+    type_i64 = type_get_or_create_integer(8);
+
     if(argc == 2 && !strcmp(argv[1], "t")) {
         while(current_token_type != TOK_T_EOF) {
             lex_token();

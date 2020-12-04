@@ -93,6 +93,20 @@ int do_var_test() {
     supplement_assert(c == 12);
 }
 
+int more_tests() {
+    int a = 1;
+    int b = a;
+    int c = 2;
+    int d = b;
+    int e = d;
+    int f = 3;
+    int g = e;
+    int h = 4;
+
+    supplement_assert(h == 4);
+    supplement_assert(a == 1);
+}
+
 
 int fib(int n) {
     if(n <= 1) {
@@ -133,16 +147,17 @@ int identifier_test() {
     supplement_assert(c7 == 3);
 }
 
-int argument_passing_test_inner(int a, int b, int c, int d, int e) {
+int argument_passing_test_inner(int a, int b, int c, int d, int e, int f) {
     supplement_assert(a == 1);
     supplement_assert(b == 2);
     supplement_assert(c == 3);
     supplement_assert(d == 4);
     supplement_assert(e == 5);
+    supplement_assert(f == 6);
 }
 
 int argument_passing_test() {
-    argument_passing_test_inner(1, 2, 3, 4, 5);
+    argument_passing_test_inner(1, 2, 3, 4, 5, 6);
 }
 
 int do_test() {

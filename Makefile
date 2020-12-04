@@ -11,7 +11,7 @@ dbg: xcc test_1.c
 	gdb ./xcc
 
 xcc: xcc.c
-	gcc -Wall -Werror -ggdb xcc.c -o xcc -std=gnu11
+	gcc -fsanitize=undefined -Wall -Werror -ggdb xcc.c -o xcc -std=gnu11
 
 assembly.S: xcc test_1.c
 	./xcc < test_1.c > assembly_temp.S
