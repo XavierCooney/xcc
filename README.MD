@@ -4,6 +4,6 @@ The overarching goal for this project is to create a [self-hosting](https://en.w
 
 I started this project in late 2019, and then put it on hiatus, and I'm now returning to it in late 2020.
 
-You can see my progress by checking out the main test suite program, [test_1.c](https://github.com/XavierCooney/xcc/blob/master/test_1.c). The code generation targets x86-64 systems with the System V (Linux, etc) ABI.
+You can see my progress by checking out the main test suite program, [main_test_suite.c](https://github.com/XavierCooney/xcc/blob/master/main_test_suite.c). The code generation targets x86-64 systems with the System V (Linux, etc) ABI.
 
 Please note that in this project I intend to make a compiler that functions, but not necessarily one that produces an optimised output.  Although I plan on some basic optimisations (like constant folding), the goal of making the compiler one-pass precludes a lot of more advanced optimisations.
