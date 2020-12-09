@@ -150,9 +150,7 @@ bool tok_is_keyword(const char *keyword) {
 
 void characterise_token() {
     expand_token(); // for keyword checking, not ideal
-    if(tok_is_keyword("int") || tok_is_keyword("i64")) {
-        current_token_type = TOK_WORD_INT;
-    } else if(tok_is_keyword("return")) {
+    if(tok_is_keyword("return")) {
         current_token_type = TOK_WORD_RETURN;
     } else if(tok_is_keyword("if")) {
         current_token_type = TOK_WORD_IF;
@@ -346,13 +344,18 @@ void parse_assert_impl(bool condition, const char *msg, int line) {
 }
 
 #define parse_assert(condition) parse_assert_impl(condition, #condition, __LINE__)
+#define parse_assert_msg(condition, msg) parse_assert_impl(condition, "cond: " #condition ", msg: " msg, __LINE__)
 
 void emit_epilogue() {
     emit_line("movq %rbp, %rsp", "function epilogue", true);
     emit_line("popq %rbp", "function epilogue", true);
 }
 
-#define NUM_TYPES 2048
+#define NUM_TYPES 512
+#define VALUE_STACK_SIZE 512
+#define VAR_LIST_MAX_LEN 800
+#define MAX_VAR_LEN 40
+#define MAX_FUNC_ARGS 15
 
 enum TypeType {
     TypeInteger, TypePointer
@@ -363,6 +366,13 @@ struct Type {
     int type_size; // for pointers and integral types, in bytes
 } types[NUM_TYPES];
 int next_type_id = 0;
+
+struct TypeName {
+    char type_name[MAX_VAR_LEN + 1];
+    int type_id;
+} type_names[NUM_TYPES];
+int next_type_name_index = 0;
+
 
 void type_print_to_stderr(int type_id) {
     if(type_id < 0 || type_id >= next_type_id) {
@@ -419,7 +429,24 @@ int type_size(int type_id) {
     return types[type_id].type_size;
 }
 
-#define VALUE_STACK_SIZE 512
+int type_lookup_name(const char *type_name) {
+    for(int i = 0; i < next_type_name_index; ++i) {
+        if(!strcmp(type_name, type_names[i].type_name)) {
+            return type_names[i].type_id;
+        }
+    }
+    return -1;
+}
+
+void type_add_name(int type_num, const char *type_name) {
+    parse_assert_impl(type_lookup_name(type_name) == -1, "redeclaration of a type name", __LINE__);
+    assert(next_type_name_index < NUM_TYPES);
+    strncpy(type_names[next_type_name_index].type_name, type_name, MAX_VAR_LEN);
+    type_names[next_type_name_index].type_name[MAX_VAR_LEN - 1] = '\0';
+    type_names[next_type_name_index].type_id = type_num;
+    next_type_name_index++;
+}
+
 
 enum ValueType {
     // all the places the result of a computation could be
@@ -438,7 +465,6 @@ struct Value {
 int next_value_stack_entry_num = 0;
 
 int type_i64; // initialised in main()
-int type_i64_pointer; // also initialised in main()
 
 void val_pop_rvalue_rax(int expected_type_id) {
     int value_pos_in_stack = next_value_stack_entry_num - 1;
@@ -537,10 +563,6 @@ bool accept(int expected) {
 
 #define expect(token_type) parse_assert_impl(accept(token_type), "expected " #token_type, __LINE__)
 
-#define VAR_LIST_MAX_LEN 800
-#define MAX_VAR_LEN 40
-#define MAX_FUNC_ARGS 15
-
 struct {
     int base_pointer_offset;
     char var_name[MAX_VAR_LEN + 1];
@@ -567,16 +589,22 @@ int temp_func_ret_type;
 
 int parse_maybe_type() {
     // returns -1 if the type does not exist
-    if(accept(TOK_WORD_INT)) {
+    if(current_token_type == TOK_IDENT) {
+        int type_id = type_lookup_name(current_token_expansion);
+        if(type_id == -1) {
+            return -1;
+        }
+        accept(TOK_IDENT);
+
         int indirection = 0;
         while(accept(TOK_STAR)) {
             indirection++;
         }
-        int type_id = type_i64;
         while(indirection) {
             type_id = type_get_or_create_pointer(type_id);
             indirection--;
         }
+
         return type_id;
     } else {
         return -1;
@@ -1185,7 +1213,11 @@ void parse_program() {
 
 int main(int argc, char const *argv[]) {
     type_i64 = type_get_or_create_integer(8);
-    type_i64_pointer = type_get_or_create_pointer(type_i64);
+    int type_void = type_get_or_create_integer(0);
+
+    type_add_name(type_i64, "int");
+    type_add_name(type_i64, "i64");
+    type_add_name(type_void, "void");
 
     if(argc == 2 && !strcmp(argv[1], "t")) {
         while(current_token_type != TOK_T_EOF) {

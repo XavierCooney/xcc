@@ -254,6 +254,10 @@ int test_return_type_sigs() {
 int empty_function() {
 }
 
+void test_void() {
+    supplement_assert(1);
+}
+
 int do_test() {
     do_basic_arithmetic_test();
     do_basic_arithmetic_test_with_vars();
@@ -264,6 +268,7 @@ int do_test() {
     identifier_test();
     basic_pointer_type_test();
     empty_function();
+    test_void();
 
     supplement_print_nl();
 }

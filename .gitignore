@@ -1,6 +1,6 @@
 assembly*.S
-test_*
 xcc
 out
 *.o
 .vscode/
+*temp*
