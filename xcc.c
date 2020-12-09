@@ -422,8 +422,7 @@ int type_size(int type_id) {
 #define VALUE_STACK_SIZE 512
 
 enum ValueType {
-    // all the places the result of a computation
-    // could be
+    // all the places the result of a computation could be
     ValueTypeConstant, // the value is just a constant equal to data
     ValueTypeStack, // the value is an offset (data) from the base pointer
     ValueTypeMemory, // the value is in memory pointed to by the value in the value stack indexed by data
@@ -556,8 +555,15 @@ struct {
     int num_args;
     char func_name[MAX_VAR_LEN + 1];
     int arg_type_ids[MAX_FUNC_ARGS];
+    int return_type_id;
 } global_funcs[VAR_LIST_MAX_LEN + 1];
 int global_funcs_len = 0;
+
+struct {
+    char name[MAX_VAR_LEN];
+} temp_func_def_param_list[VAR_LIST_MAX_LEN];
+int temp_func_def_param_list_len;
+int temp_func_ret_type;
 
 int parse_maybe_type() {
     // returns -1 if the type does not exist
@@ -596,11 +602,13 @@ void parse_primary_expression() {
             // function call
             int num_args;
             int *arg_types;
+            int return_type;
             bool found_func = false;
             for(int i = 0; i < global_funcs_len; ++i) {
                 if(!strcmp(global_funcs[i].func_name, ident_contents)) {
                     num_args = global_funcs[i].num_args;
                     arg_types = global_funcs[i].arg_type_ids;
+                    return_type = global_funcs[i].return_type_id;
                     found_func = true;
                     break;
                 }
@@ -642,7 +650,7 @@ void parse_primary_expression() {
             emit_partial_asm("call ");
             emit_partial_asm(ident_contents);
             emit_partial_explanation("invoke function");
-            val_place_rax(type_i64);
+            val_place_rax(return_type);
         } else {
             // local variable
             int required_offset;
@@ -956,7 +964,7 @@ void parse_statement() {
         expect(TOK_SEMI);
     } else if(accept(TOK_WORD_RETURN)) {
         parse_expression();
-        val_pop_rvalue_rax(type_i64);
+        val_pop_rvalue_rax(temp_func_ret_type);
         expect(TOK_SEMI);
 
         emit_epilogue();
@@ -1061,14 +1069,11 @@ void parse_statement() {
     }
 }
 
-struct {
-    char name[MAX_VAR_LEN];
-} temp_func_def_param_list[VAR_LIST_MAX_LEN];
-int temp_func_def_param_list_len;
-
 void parse_function() {
     int return_type_id = parse_maybe_type();
     parse_assert(return_type_id != -1);
+
+    temp_func_ret_type = return_type_id;
 
     char func_name[TOK_EXPANSION_BUF_LEN];
 
@@ -1110,6 +1115,7 @@ void parse_function() {
     strncpy(global_funcs[global_func_index].func_name, func_name, MAX_VAR_LEN);
     global_funcs[global_func_index].func_name[MAX_VAR_LEN - 1] = '\0';
     global_funcs[global_func_index].num_args = temp_func_def_param_list_len;
+    global_funcs[global_func_index].return_type_id = return_type_id;
     global_funcs_len++;
 
     if(accept(TOK_L_BRACE)) {

@@ -233,6 +233,22 @@ int basic_pointer_type_test() {
     supplement_assert((int) b == 23);
 }
 
+int* return_type_test_int_star(int in) {
+    return (int*) in;
+}
+
+int** return_type_test_int_star_star(int in) {
+    return (int**) in;
+}
+
+int test_return_type_sigs() {
+    int *a = return_type_test_int_star(3);
+    int **b = return_type_test_int_star_star(4);
+
+    supplement_assert((int) a == 3);
+    supplement_assert((int) b == 3);
+}
+
 int do_test() {
     do_basic_arithmetic_test();
     do_basic_arithmetic_test_with_vars();
