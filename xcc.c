@@ -345,7 +345,7 @@ void parse_assert_impl(bool condition, const char *msg, int line) {
     }
 }
 
-#define parse_assert(condition) parse_assert_impl(condition, #condition " on line ", __LINE__)
+#define parse_assert(condition) parse_assert_impl(condition, #condition, __LINE__)
 
 void emit_epilogue() {
     emit_line("movq %rbp, %rsp", "function epilogue", true);
@@ -383,7 +383,7 @@ void type_print_to_stderr(int type_id) {
 
 int type_get_or_create_integer(int width_in_bytes) {
     for(int existing_id = 0; existing_id < next_type_id; ++existing_id) {
-        if(types[existing_id].type_size == width_in_bytes && types[existing_id].type_type == TypeInteger) {
+        if(types[existing_id].type_type == TypeInteger && types[existing_id].type_size == width_in_bytes) {
             return existing_id;
         }
     }
@@ -397,6 +397,27 @@ int type_get_or_create_integer(int width_in_bytes) {
     return next_type_id - 1;
 }
 
+int type_get_or_create_pointer(int underlying_type_id) {
+    for(int existing_id = 0; existing_id < next_type_id; ++existing_id) {
+        if(types[existing_id].type_type == TypePointer && types[existing_id].underlying_type_num == underlying_type_id) {
+            return existing_id;
+        }
+    }
+
+    assert(next_type_id < NUM_TYPES);
+    types[next_type_id].type_size = 8; // width of pointer in x64
+    types[next_type_id].type_type = TypePointer;
+    types[next_type_id].underlying_type_num = underlying_type_id;
+
+    next_type_id++;
+    return next_type_id - 1;
+}
+
+int type_size(int type_id) {
+    assert(type_id >= 0 && type_id < next_type_id);
+
+    return types[type_id].type_size;
+}
 
 #define VALUE_STACK_SIZE 512
 
@@ -418,11 +439,23 @@ struct Value {
 int next_value_stack_entry_num = 0;
 
 int type_i64; // initialised in main()
+int type_i64_pointer; // also initialised in main()
 
-void val_pop_rvalue_rax() {
+void val_pop_rvalue_rax(int expected_type_id) {
     int value_pos_in_stack = next_value_stack_entry_num - 1;
     assert(value_pos_in_stack >= 0);
     int value_type = value_stack[value_pos_in_stack].value_type;
+    int actual_type_id = value_stack[value_pos_in_stack].type_id;
+
+    // Todo: more sophistcated type conversion
+    if(actual_type_id != expected_type_id) {
+        fprintf(stderr, "Type mismatch!\nGot: ");
+        type_print_to_stderr(actual_type_id);
+        fprintf(stderr, ", but needed: ");
+        type_print_to_stderr(expected_type_id);
+        fprintf(stderr, "\n");
+        parse_assert(false);
+    }
 
     if(value_type == ValueTypeConstant) {
         emit_partial_indent();
@@ -443,7 +476,8 @@ void val_pop_rvalue_rax() {
         parse_assert(underlying_value_index == value_pos_in_stack - 1);
         next_value_stack_entry_num--; // pop off value stack so pointer can be placed into %rax
 
-        val_pop_rvalue_rax();
+        assert(types[actual_type_id].type_type == TypePointer);
+        val_pop_rvalue_rax(types[actual_type_id].underlying_type_num);
         // the pointer to the value should now be in %rax
 
         emit_line("movq (%rax), %rax", "derefence value", true);
@@ -505,12 +539,13 @@ bool accept(int expected) {
 #define expect(token_type) parse_assert_impl(accept(token_type), "expected " #token_type, __LINE__)
 
 #define VAR_LIST_MAX_LEN 800
-
 #define MAX_VAR_LEN 40
+#define MAX_FUNC_ARGS 15
 
 struct {
     int base_pointer_offset;
     char var_name[MAX_VAR_LEN + 1];
+    int type_id;
 } stack_variables[VAR_LIST_MAX_LEN + 1];
 
 int stack_variables_length = 0;
@@ -520,8 +555,27 @@ int stack_variables_length = 0;
 struct {
     int num_args;
     char func_name[MAX_VAR_LEN + 1];
-} global_funcs[VAR_LIST_MAX_LEN + 1]; 
+    int arg_type_ids[MAX_FUNC_ARGS];
+} global_funcs[VAR_LIST_MAX_LEN + 1];
 int global_funcs_len = 0;
+
+int parse_maybe_type() {
+    // returns -1 if the type does not exist
+    if(accept(TOK_WORD_INT)) {
+        int indirection = 0;
+        while(accept(TOK_STAR)) {
+            indirection++;
+        }
+        int type_id = type_i64;
+        while(indirection) {
+            type_id = type_get_or_create_pointer(type_id);
+            indirection--;
+        }
+        return type_id;
+    } else {
+        return -1;
+    }
+}
 
 void parse_expression();
 
@@ -541,10 +595,12 @@ void parse_primary_expression() {
         if(accept(TOK_L_PAREN)) {
             // function call
             int num_args;
+            int *arg_types;
             bool found_func = false;
             for(int i = 0; i < global_funcs_len; ++i) {
                 if(!strcmp(global_funcs[i].func_name, ident_contents)) {
                     num_args = global_funcs[i].num_args;
+                    arg_types = global_funcs[i].arg_type_ids;
                     found_func = true;
                     break;
                 }
@@ -556,8 +612,10 @@ void parse_primary_expression() {
 
             int arg_num = 0;
             while(current_token_type != TOK_R_PAREN && current_token_type != TOK_T_EOF) {
+                parse_assert(arg_num < num_args);
+
                 parse_expression();
-                val_pop_rvalue_rax();
+                val_pop_rvalue_rax(arg_types[arg_num]); // TODO: support non-i64 arguments
                 if(arg_num == 0) {
                     emit_line("movq %rax, %rdi", "load first param of func call", true);
                 } else if(arg_num == 1) {
@@ -579,7 +637,6 @@ void parse_primary_expression() {
                 ++arg_num;
             }
             expect(TOK_R_PAREN);
-            parse_assert(arg_num == num_args);
 
             emit_partial_indent();
             emit_partial_asm("call ");
@@ -589,10 +646,12 @@ void parse_primary_expression() {
         } else {
             // local variable
             int required_offset;
+            int type_id;
             bool found_var = false;
             for(int i = stack_variables_length; i >= 0; --i) {
                 if(!strcmp(stack_variables[i].var_name, ident_contents)) {
                     required_offset = stack_variables[i].base_pointer_offset;
+                    type_id = stack_variables[i].type_id;
                     found_var = true;
                     break;
                 }
@@ -602,29 +661,48 @@ void parse_primary_expression() {
                 parse_assert(found_var);
             }
 
-            val_place_stack_var(required_offset, type_i64);
+            val_place_stack_var(required_offset, type_id);
+        }
+    } else if(accept(TOK_L_PAREN)) {
+        int possible_type_cast_id = parse_maybe_type();
+        if(possible_type_cast_id != -1) {
+            // really is an unary expression, but this is
+            // where we parse parens so...
+            // TODO: This is very hacky. There's probably
+            // a bunch of cases this breaks on...
+            expect(TOK_R_PAREN);
+
+            // I don't actually remember the precedence for these
+            // prefix casts... I always just use parens when it's
+            // not a primary expression...
+            parse_primary_expression();
+
+            parse_assert(next_value_stack_entry_num > 0);
+            value_stack[next_value_stack_entry_num - 1].type_id = possible_type_cast_id;
+        } else {
+            // just ordinary grouping brackets
+            parse_expression();
+            expect(TOK_R_PAREN);
         }
     } else {
-        expect(TOK_L_PAREN);
-        parse_expression();
-        expect(TOK_R_PAREN);
+        parse_assert(false);
     }
 }
 
 void parse_unary_expression() {
     if(accept(TOK_TILDE)) {
         parse_unary_expression();
-        val_pop_rvalue_rax();
+        val_pop_rvalue_rax(type_i64);
         emit_line("not %rax", "bitwise not operator", true);
         val_place_rax(type_i64);
     } else if(accept(TOK_MINUS)) {
         parse_unary_expression();
-        val_pop_rvalue_rax();
+        val_pop_rvalue_rax(type_i64);
         emit_line("neg %rax", "unary negation operator", true);
         val_place_rax(type_i64);
     } else if(accept(TOK_NOT)) {
         parse_unary_expression();
-        val_pop_rvalue_rax();
+        val_pop_rvalue_rax(type_i64);
         emit_line("cmpq $0, %rax", "unary not operator", true);
         emit_line("movq $0, %rax", "unary not operator (zero out)", true);
         emit_line("setz %al", "unary not operator (set if ZF, upper bits already zerod)", true);
@@ -644,10 +722,10 @@ void parse_multiplication_expression() {
             expect(TOK_SLASH);
             is_times = false;
         }
-        val_pop_rvalue_rax();
+        val_pop_rvalue_rax(type_i64);
         emit_line("pushq %rax", "save rax for multiplication/division", true);
         parse_unary_expression();
-        val_pop_rvalue_rax();
+        val_pop_rvalue_rax(type_i64);
         if(is_times) {
             emit_line("popq %rcx", "retrieve first operand for multiplication", true);
             emit_line("imulq %rcx, %rax", "perform multiplication", true);
@@ -671,19 +749,41 @@ void parse_addition_expression() {
             expect(TOK_MINUS);
             is_plus = false;
         }
-        val_pop_rvalue_rax();
+
+        // TODO: support pointers on rhs, and pointer subtraction
+        // check for pointer addition
+        int lhs_type_id = value_stack[next_value_stack_entry_num - 1].type_id;
+        bool is_pointer = false;
+        int pointer_size = -1;
+        if(types[lhs_type_id].type_type == TypePointer) {
+            is_pointer = true;
+            pointer_size = types[types[lhs_type_id].underlying_type_num].type_size;
+            parse_assert(is_plus);
+        }
+
+        val_pop_rvalue_rax(lhs_type_id);
         emit_line("pushq %rax", "save rax for addition/subtraction", true);
         parse_multiplication_expression();
-        val_pop_rvalue_rax();
+        val_pop_rvalue_rax(type_i64);
+
         if(is_plus) {
             emit_line("popq %rcx", "retrieve first operand for addition/subtraction", true);
-            emit_line("addq %rcx, %rax", "perform addidition", true);
+            if(!is_pointer) {
+                emit_line("addq %rcx, %rax", "perform addidition", true);
+            } else {
+                emit_partial_indent();
+                emit_partial_asm("leaq (%rcx,%rax,");
+                emit_partial_num(pointer_size);
+                emit_partial_asm("), %rax");
+                emit_partial_explanation("performan addition of a pointer with an integer");
+            }
         } else {
             emit_line("movq %rax, %rcx", "move first operand for subtraction", true);
             emit_line("popq %rax", "retrieve first operand for subtraction", true);
             emit_line("subq %rcx, %rax", "perform subtraction", true);
         }
-        val_place_rax(type_i64);
+
+        val_place_rax(lhs_type_id);
     }
 }
 
@@ -717,10 +817,10 @@ void parse_comparison_expression() {
             was_eq = true;
         }
 
-        val_pop_rvalue_rax();
+        val_pop_rvalue_rax(type_i64); // TODO: pointer comparison
         emit_line("pushq %rax", "save rax for equality", true);
         parse_addition_expression();
-        val_pop_rvalue_rax();
+        val_pop_rvalue_rax(type_i64);
         emit_line("popq %rdx", "retrieve first operand", true);
         emit_line("cmpq %rax, %rdx", "compare first and second operand in (in)equality", true);
         emit_line("movq $0, %rax", "set %rax to false in prep for inequality", true);
@@ -773,10 +873,11 @@ void parse_assignment_expression() {
         next_value_stack_entry_num--;
         int top_value_value_type = value_stack[top_value_index].value_type;
         int top_value_data = value_stack[top_value_index].data;
+        int top_value_type_id = value_stack[top_value_index].type_id;
 
         if(top_value_value_type == ValueTypeStack) {
             parse_or_expression();
-            val_pop_rvalue_rax();
+            val_pop_rvalue_rax(top_value_type_id);
 
             emit_partial_indent();
             emit_partial_asm("movq %rax, ");
@@ -827,20 +928,17 @@ void pop_val_stack_to_0() {
 }
 
 void parse_statement() {
-    if(accept(TOK_WORD_RETURN)) {
-        parse_expression();
-        val_pop_rvalue_rax();
-        expect(TOK_SEMI);
-
-        emit_epilogue();
-        emit_line("ret", "return statement", true);
-    } else if(accept(TOK_WORD_INT)) {
+    int parsed_type_id = parse_maybe_type();
+    if(parsed_type_id != -1) {
         parse_assert(current_token_type == TOK_IDENT);
 
+        stack_variables[stack_variables_length].type_id = parsed_type_id;
+        parse_assert_impl(type_size(parsed_type_id) == 8, "non 8 byte width types not supported", __LINE__);
         strncpy(stack_variables[stack_variables_length].var_name, current_token_expansion, MAX_VAR_LEN);
         stack_variables[stack_variables_length].var_name[MAX_VAR_LEN - 1] = '\0';
         int base_ptr_offset = -8;
         if(stack_variables_length) {
+            // TODO: change to accomdate different sizes
             base_ptr_offset = stack_variables[stack_variables_length - 1].base_pointer_offset - 8;
         }
         stack_variables[stack_variables_length].base_pointer_offset = base_ptr_offset;
@@ -848,7 +946,7 @@ void parse_statement() {
         expect(TOK_IDENT);
         if(accept(TOK_EQUALS)) {
             parse_expression();
-            val_pop_rvalue_rax();
+            val_pop_rvalue_rax(parsed_type_id);
         } else {
             emit_line("movq $0x4242, %rax", "load default uninitialised value to new var", true);
         }
@@ -856,6 +954,13 @@ void parse_statement() {
 
         stack_variables_length += 1;
         expect(TOK_SEMI);
+    } else if(accept(TOK_WORD_RETURN)) {
+        parse_expression();
+        val_pop_rvalue_rax(type_i64);
+        expect(TOK_SEMI);
+
+        emit_epilogue();
+        emit_line("ret", "return statement", true);
     } else if(accept(TOK_WORD_IF)) {
         /*
             if(a) {
@@ -868,7 +973,7 @@ void parse_statement() {
 
         expect(TOK_L_PAREN);
         parse_expression();
-        val_pop_rvalue_rax();
+        val_pop_rvalue_rax(type_i64);
         expect(TOK_R_PAREN);
 
         emit_line("testq %rax, %rax", "set ZF if %rax is 0", true);
@@ -927,7 +1032,7 @@ void parse_statement() {
 
         expect(TOK_L_PAREN);
         parse_expression();
-        val_pop_rvalue_rax();
+        val_pop_rvalue_rax(type_i64);
         expect(TOK_R_PAREN);
 
         emit_line("testq %rax, %rax", "set ZF if %rax is 0", true);
@@ -958,11 +1063,12 @@ void parse_statement() {
 
 struct {
     char name[MAX_VAR_LEN];
-} func_def_param_list[VAR_LIST_MAX_LEN];
-int func_def_param_list_len;
+} temp_func_def_param_list[VAR_LIST_MAX_LEN];
+int temp_func_def_param_list_len;
 
 void parse_function() {
-    expect(TOK_WORD_INT);
+    int return_type_id = parse_maybe_type();
+    parse_assert(return_type_id != -1);
 
     char func_name[TOK_EXPANSION_BUF_LEN];
 
@@ -973,14 +1079,26 @@ void parse_function() {
     expect(TOK_L_PAREN);
 
     stack_variables_length = 0;
-    func_def_param_list_len = 0;
+    temp_func_def_param_list_len = 0;
+
+    int global_func_index = global_funcs_len;
+    parse_assert(global_func_index < VAR_LIST_MAX_LEN);
 
     while(current_token_type != TOK_R_PAREN && current_token_type != TOK_T_EOF) {
-        expect(TOK_WORD_INT);
+        // TODO: check if a function has already been declared, and if
+        // so check if the signature is the same
+        int type_id = parse_maybe_type();
+        parse_assert(type_id != -1);
+
         parse_assert(current_token_type == TOK_IDENT);
-        strncpy(func_def_param_list[func_def_param_list_len].name, current_token_expansion, MAX_VAR_LEN);
-        func_def_param_list[func_def_param_list_len].name[MAX_VAR_LEN - 1] = '\0';
-        ++func_def_param_list_len;
+        strncpy(temp_func_def_param_list[temp_func_def_param_list_len].name, current_token_expansion, MAX_VAR_LEN);
+        temp_func_def_param_list[temp_func_def_param_list_len].name[MAX_VAR_LEN - 1] = '\0';
+
+        global_funcs[global_func_index].arg_type_ids[temp_func_def_param_list_len] = type_id;
+
+        ++temp_func_def_param_list_len;
+        parse_assert(temp_func_def_param_list_len < MAX_FUNC_ARGS);
+
         expect(TOK_IDENT);
         if(current_token_type != TOK_R_PAREN) {
             expect(TOK_COMMA);
@@ -989,10 +1107,10 @@ void parse_function() {
 
     expect(TOK_R_PAREN);
 
-    strncpy(global_funcs[global_funcs_len].func_name, func_name, MAX_VAR_LEN);
-    global_funcs[global_funcs_len].func_name[MAX_VAR_LEN - 1] = '\0';
-    global_funcs[global_funcs_len].num_args = func_def_param_list_len;
-    ++global_funcs_len;
+    strncpy(global_funcs[global_func_index].func_name, func_name, MAX_VAR_LEN);
+    global_funcs[global_func_index].func_name[MAX_VAR_LEN - 1] = '\0';
+    global_funcs[global_func_index].num_args = temp_func_def_param_list_len;
+    global_funcs_len++;
 
     if(accept(TOK_L_BRACE)) {
         emit_partial_indent();
@@ -1008,8 +1126,8 @@ void parse_function() {
         emit_line("movq %rsp, %rbp", "function prologue", true);
 
         // generate asm to move paramaters to stack
-        for(int i = 0; i < func_def_param_list_len; ++i) {
-            strcpy(stack_variables[stack_variables_length].var_name, func_def_param_list[i].name);
+        for(int i = 0; i < temp_func_def_param_list_len; ++i) {
+            strcpy(stack_variables[stack_variables_length].var_name, temp_func_def_param_list[i].name);
             stack_variables[stack_variables_length].var_name[MAX_VAR_LEN - 1] = '\0';
             int base_ptr_offset = -8;
             if(stack_variables_length) {
@@ -1061,6 +1179,7 @@ void parse_program() {
 
 int main(int argc, char const *argv[]) {
     type_i64 = type_get_or_create_integer(8);
+    type_i64_pointer = type_get_or_create_pointer(type_i64);
 
     if(argc == 2 && !strcmp(argv[1], "t")) {
         while(current_token_type != TOK_T_EOF) {
