@@ -1,3 +1,4 @@
+// Note there are more tests under more_tests/
 // test comment
 int putchar(int c);
 
@@ -5,6 +6,7 @@ int supplement_assert(int condition);
 int supplement_print_int(int v);
 int supplement_print_nl();
 int supplement_print_char(int c);
+int supplement_print_stats();
 
 int fib(int n);
 
@@ -249,6 +251,9 @@ int test_return_type_sigs() {
     supplement_assert((int) b == 3);
 }
 
+int empty_function() {
+}
+
 int do_test() {
     do_basic_arithmetic_test();
     do_basic_arithmetic_test_with_vars();
@@ -258,6 +263,7 @@ int do_test() {
     do_while_test_2();
     identifier_test();
     basic_pointer_type_test();
+    empty_function();
 
     supplement_print_nl();
 }
@@ -265,5 +271,6 @@ int do_test() {
 int main() {
     hello_world_putchar();
     do_test();
+    supplement_print_stats();
     return 0;
 }
