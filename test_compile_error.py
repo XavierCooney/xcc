@@ -13,8 +13,8 @@ if not NO_MAKE:
     subprocess.run(['make', 'xcc'], check=True)
 
 failed_a_test = False
-
 test_pass_output = []
+total_expectations_passed = 0
 
 for test_file_name in os.listdir(COMPILE_TEST_DIR):
     if test_file_name.endswith('.expected'): continue
@@ -62,8 +62,9 @@ for test_file_name in os.listdir(COMPILE_TEST_DIR):
                 assert False, "command " + cmd + " not known in " + test_file_name
             num_expectations_passed += 1
         else:
+            total_expectations_passed += num_expectations_passed
             test_pass_output.append(
-                f"{'✔' * num_expectations_passed}\t{num_expectations_passed} test(s) passed on {test_file_name}"
+                f"{'✔' * num_expectations_passed}\t{num_expectations_passed} test(s) passed in {test_file_name}"
             )
             if not num_expectations_passed:
                 print_verbose_dbg_info()
@@ -71,6 +72,7 @@ for test_file_name in os.listdir(COMPILE_TEST_DIR):
         print_verbose_dbg_info()
     failed_a_test = failed_a_test or failed_this_test
 
+print(f"{total_expectations_passed} expectations passed!")
 print(*test_pass_output, sep='\n')
 
 if failed_a_test:
