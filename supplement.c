@@ -11,6 +11,8 @@ void supplement_assert(i64 condition) {
         putchar('.');
         tests_passed++;
     } else {
+        printf("\nassertion failed!\n");
+        fflush(stdout);
         assert(condition);
     }
 }
@@ -30,3 +32,4 @@ void supplement_print_nl() {
 void supplement_print_char(i64 c) {
     printf("%c", (int) c);
 }
+

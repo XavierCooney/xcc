@@ -232,7 +232,7 @@ int argument_passing_test() {
 int basic_pointer_type_test() {
     int *a = (int*) 7;
     int *b = a + 2;
-    supplement_assert((int) b == 23);
+    supplement_assert((int) b == 23); // 7 + 2 * 8
 }
 
 int* return_type_test_int_star(int in) {
@@ -258,6 +258,76 @@ void test_void() {
     supplement_assert(1);
 }
 
+int global_var_1 = 3;
+
+int do_global_test_1_inner_1(int a) {
+    global_var_1 = a + 7;
+}
+
+int do_global_test_1_inner_2(int a) {
+    supplement_assert(a + 1 == global_var_1);
+}
+
+int do_globals_test_1() {
+    supplement_assert(global_var_1 == 3);
+    global_var_1 = 5;
+    supplement_assert(global_var_1 == 5);
+    do_global_test_1_inner_1(10);
+    supplement_assert(global_var_1 == 17);
+    global_var_1 = 30;
+    do_global_test_1_inner_2(29);
+    do_global_test_1_inner_1(36);
+    do_global_test_1_inner_2(42);
+}
+
+int shadowing_local_test_1() {
+    // note: this one isn't (or shouldn't actually be a global variable)
+    int global_var_1 = 7;
+    do_global_test_1_inner_2(42);
+    global_var_1 = 5;
+    supplement_assert(global_var_1 == 5);
+    do_global_test_1_inner_2(42);
+}
+
+int global_var_2;
+
+int zeroed_global_var_2_test() {
+    supplement_assert(global_var_2 == 0);
+    global_var_2 = 72;
+    supplement_assert(global_var_2 == 72);
+}
+
+int shadowing_local_test_2() {
+    // note: this one isn't (or shouldn't actually be a global variable)
+    int global_var_1;
+    do_global_test_1_inner_2(42);
+    global_var_1 = 99;
+    supplement_assert(global_var_1 == 99);
+    do_global_test_1_inner_2(42);
+}
+
+int complicated_control_structure_test() {
+    int a = 1;
+    if(1 > 0) {
+        int b = 2;
+        int c = 3;
+        if(0 > 1) {
+            int d = 5;
+            int e = 6;
+        } else {
+            int f = 7;
+            supplement_assert(a == 1);
+            supplement_assert(b == 2);
+            supplement_assert(c == 3);
+            supplement_assert(f == 7);
+        }
+    } else {
+        int x = 9;
+        int y = 10;
+        int z = 7;
+    }
+}
+
 int do_test() {
     do_basic_arithmetic_test();
     do_basic_arithmetic_test_with_vars();
@@ -269,6 +339,10 @@ int do_test() {
     basic_pointer_type_test();
     empty_function();
     test_void();
+    do_globals_test_1();
+    shadowing_local_test_1();
+    shadowing_local_test_2();
+    complicated_control_structure_test();
 
     supplement_print_nl();
 }

@@ -30,4 +30,5 @@ out: assembly.S supplement.o
 .PHONY: test
 test: out
 	./out
+	@echo
 	python3 test_compile_error.py --no-make

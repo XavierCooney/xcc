@@ -447,6 +447,36 @@ void type_add_name(int type_num, const char *type_name) {
     next_type_name_index++;
 }
 
+struct {
+    int base_pointer_offset;
+    char var_name[MAX_VAR_LEN + 1];
+    int type_id;
+} stack_variables[VAR_LIST_MAX_LEN + 1];
+
+int stack_variables_length = 0;
+
+
+// eventually these will be global constant function pointers when the typing system is in place
+struct {
+    int num_args;
+    char func_name[MAX_VAR_LEN + 1];
+    int arg_type_ids[MAX_FUNC_ARGS];
+    int return_type_id;
+} global_funcs[VAR_LIST_MAX_LEN + 1];
+int global_funcs_len = 0;
+
+struct {
+    int type_id;
+    char var_name[MAX_VAR_LEN + 1];
+    int initial_value;
+} global_vars[VAR_LIST_MAX_LEN + 1];
+int global_vars_len = 0;
+
+struct {
+    char name[MAX_VAR_LEN];
+} temp_func_def_param_list[VAR_LIST_MAX_LEN];
+int temp_func_def_param_list_len;
+int temp_func_ret_type;
 
 enum ValueType {
     // all the places the result of a computation could be
@@ -455,6 +485,7 @@ enum ValueType {
     ValueTypeMemory, // the value is in memory pointed to by the value in the value stack indexed by data
     ValueTypeRAX, // it's in the rax constant
     ValueTypeLabel, // the value is the address of a label (label number data) in memory
+    ValueTypeGlobalVar, // the value is held in a global variable (index is data) in the .data section
 };
 
 struct Value {
@@ -465,6 +496,19 @@ struct Value {
 int next_value_stack_entry_num = 0;
 
 int type_i64; // initialised in main()
+int type_void_pointer;
+
+bool can_convert_between_types(int actual, int expected) {
+    // TODO: do this but better
+    // I think the only conversion that's
+    // really needed is between differently
+    // size int types and something like
+    // T*  <-->  void*
+    // On second thought, maybe don't implement
+    // void* conversion?
+
+    return false;
+}
 
 void val_pop_rvalue_rax(int expected_type_id) {
     int value_pos_in_stack = next_value_stack_entry_num - 1;
@@ -473,7 +517,7 @@ void val_pop_rvalue_rax(int expected_type_id) {
     int actual_type_id = value_stack[value_pos_in_stack].type_id;
 
     // Todo: more sophistcated type conversion
-    if(actual_type_id != expected_type_id) {
+    if(actual_type_id != expected_type_id && !can_convert_between_types(actual_type_id, expected_type_id)) {
         fprintf(stderr, "Type mismatch!\nGot: ");
         type_print_to_stderr(actual_type_id);
         fprintf(stderr, ", but needed: ");
@@ -510,8 +554,13 @@ void val_pop_rvalue_rax(int expected_type_id) {
     } else if(value_type == ValueTypeRAX) {
         // well that was easy...
         next_value_stack_entry_num--;
-    } else if(value_type == ValueTypeRAX) {
-        emit_line("movq (%rax), %rax", "derefence value", true);
+    } else if(value_type == ValueTypeGlobalVar) {
+        parse_assert(types[actual_type_id].type_size == 8);
+        emit_partial_indent();
+        emit_partial_asm("movq ");
+        emit_partial_asm(global_vars[value_stack[value_pos_in_stack].data].var_name);
+        emit_partial_asm(", %rax");
+        emit_partial_explanation("load global variable into %rax");
         next_value_stack_entry_num--;
     } else {
         assert(false);
@@ -531,6 +580,14 @@ void val_place_stack_var(int stack_offset, int type_id) {
     value_stack[next_value_stack_entry_num].type_id = type_id;
     value_stack[next_value_stack_entry_num].value_type = ValueTypeStack;
     value_stack[next_value_stack_entry_num].data = stack_offset;
+    next_value_stack_entry_num++;
+}
+
+void val_place_global_var(int var_index, int type_id) {
+    assert(next_value_stack_entry_num < VALUE_STACK_SIZE);
+    value_stack[next_value_stack_entry_num].type_id = type_id;
+    value_stack[next_value_stack_entry_num].value_type = ValueTypeGlobalVar;
+    value_stack[next_value_stack_entry_num].data = var_index;
     next_value_stack_entry_num++;
 }
 
@@ -562,30 +619,6 @@ bool accept(int expected) {
 }
 
 #define expect(token_type) parse_assert_impl(accept(token_type), "expected " #token_type, __LINE__)
-
-struct {
-    int base_pointer_offset;
-    char var_name[MAX_VAR_LEN + 1];
-    int type_id;
-} stack_variables[VAR_LIST_MAX_LEN + 1];
-
-int stack_variables_length = 0;
-
-
-// eventually these will be global constant function pointers when the typing system is in place
-struct {
-    int num_args;
-    char func_name[MAX_VAR_LEN + 1];
-    int arg_type_ids[MAX_FUNC_ARGS];
-    int return_type_id;
-} global_funcs[VAR_LIST_MAX_LEN + 1];
-int global_funcs_len = 0;
-
-struct {
-    char name[MAX_VAR_LEN];
-} temp_func_def_param_list[VAR_LIST_MAX_LEN];
-int temp_func_def_param_list_len;
-int temp_func_ret_type;
 
 int parse_maybe_type() {
     // returns -1 if the type does not exist
@@ -683,21 +716,38 @@ void parse_primary_expression() {
             // local variable
             int required_offset;
             int type_id;
-            bool found_var = false;
-            for(int i = stack_variables_length; i >= 0; --i) {
+            bool found_local_var = false;
+
+            for(int i = stack_variables_length - 1; i >= 0; --i) {
                 if(!strcmp(stack_variables[i].var_name, ident_contents)) {
                     required_offset = stack_variables[i].base_pointer_offset;
                     type_id = stack_variables[i].type_id;
-                    found_var = true;
+                    found_local_var = true;
                     break;
                 }
             }
-            if(!found_var) {
-                fprintf(stderr, "Variable `%s` not found!\n", ident_contents);
-                parse_assert(found_var);
-            }
+            if(!found_local_var) {
+                // try check for global variable
+                int global_var_index;
+                int found_global_var = false;
+                for(int i = 0; i < global_vars_len; ++i) {
+                    if(!strcmp(global_vars[i].var_name, ident_contents)) {
+                        global_var_index = i;
+                        found_global_var = true;
+                        type_id = global_vars[i].type_id;
+                        break;
+                    }
+                }
 
-            val_place_stack_var(required_offset, type_id);
+                if(!found_global_var) {
+                    fprintf(stderr, "Variable `%s` not found!\n", ident_contents);
+                    parse_assert(found_global_var);
+                } else {
+                    val_place_global_var(global_var_index, type_id);
+                }
+            } else {
+                val_place_stack_var(required_offset, type_id);
+            }
         }
     } else if(accept(TOK_L_PAREN)) {
         int possible_type_cast_id = parse_maybe_type();
@@ -921,7 +971,17 @@ void parse_assignment_expression() {
             emit_partial_asm("(%rbp)");
             emit_partial_explanation("variable set");
 
-            val_place_rax(type_i64);
+            val_place_rax(top_value_type_id);
+        } else if(top_value_value_type == ValueTypeGlobalVar) {
+            parse_or_expression();
+            val_pop_rvalue_rax(top_value_type_id);
+
+            emit_partial_indent();
+            emit_partial_asm("movq %rax, ");
+            emit_partial_asm(global_vars[top_value_data].var_name);
+            emit_partial_explanation("global variable set");
+
+            val_place_rax(top_value_type_id);
         } else {
             assert(false);
         }
@@ -964,6 +1024,7 @@ void pop_val_stack_to_0() {
 }
 
 void parse_statement() {
+    parse_assert(next_value_stack_entry_num == 0);
     int parsed_type_id = parse_maybe_type();
     if(parsed_type_id != -1) {
         parse_assert(current_token_type == TOK_IDENT);
@@ -1097,19 +1158,8 @@ void parse_statement() {
     }
 }
 
-void parse_function() {
-    int return_type_id = parse_maybe_type();
-    parse_assert(return_type_id != -1);
-
+void parse_function(int return_type_id, const char *func_name) {
     temp_func_ret_type = return_type_id;
-
-    char func_name[TOK_EXPANSION_BUF_LEN];
-
-    parse_assert(current_token_type == TOK_IDENT);
-    strncpy(func_name, current_token_expansion, TOK_EXPANSION_BUF_LEN);
-    expect(TOK_IDENT);
-
-    expect(TOK_L_PAREN);
 
     stack_variables_length = 0;
     temp_func_def_param_list_len = 0;
@@ -1168,6 +1218,7 @@ void parse_function() {
                 base_ptr_offset = stack_variables[stack_variables_length - 1].base_pointer_offset - 8;
             }
             stack_variables[stack_variables_length].base_pointer_offset = base_ptr_offset;
+            stack_variables[stack_variables_length].type_id = global_funcs[global_func_index].arg_type_ids[i];
             stack_variables_length += 1;
             if(i == 0) { // FROM ABI
                 emit_line("pushq %rdi", "push first param to stack", true);
@@ -1201,19 +1252,77 @@ void parse_function() {
     }
 }
 
+void parse_global_variable(int type_id, const char *var_name) {
+    int var_index = global_vars_len;
+    global_vars_len++;
+
+    strncpy(global_vars[var_index].var_name, var_name, MAX_VAR_LEN);
+    global_vars[var_index].var_name[MAX_VAR_LEN - 1] = '\0';
+
+    if(accept(TOK_EQUALS)) {
+        // TODO: call parse_expression() and not just accept integers.
+        // It's probably deeply problematic to call parse_expression() here,
+        // not in the context of a function, and can probably be broken
+        // in 100 ways, but that's for later. Until constant folding though
+        // this doesn't matter.
+
+        parse_assert_msg(current_token_type == TOK_NUM, "expected number literal for assignment to global variable");
+        int final_value = atoi(current_token_expansion);
+        global_vars[var_index].initial_value = final_value;
+        expect(TOK_NUM);
+    } else {
+        global_vars[var_index].initial_value = 0;
+    }
+    expect(TOK_SEMI);
+}
+
+void parse_top_level_statement() {
+    int type_id = parse_maybe_type();
+    parse_assert(type_id != -1);
+
+    char object_name[TOK_EXPANSION_BUF_LEN];
+    parse_assert(current_token_type == TOK_IDENT);
+    strncpy(object_name, current_token_expansion, TOK_EXPANSION_BUF_LEN);
+    expect(TOK_IDENT);
+
+    if(accept(TOK_L_PAREN)) {
+        parse_function(type_id, object_name);
+    } else if(current_token_type == TOK_EQUALS || current_token_type == TOK_SEMI) {
+        // simple global variable
+        parse_global_variable(type_id, object_name);
+    }
+}
+
 void parse_program() {
     emit_line(".section .text", "text section of elf", false);
     emit_line(".align 4", "ensure 4 alignment for x64", true);
     emit_line("", "", false);
     while(current_token_type != TOK_T_EOF) {
-        parse_function();
+        parse_top_level_statement();
     }
     expect(TOK_T_EOF);
+
+    // Handle global data. Some of these could be in .bss but whatever
+    emit_line(".section .data", "data section of elf", false);
+    for(int var_index = 0; var_index < global_vars_len; ++var_index) {
+        emit_partial_asm(global_vars[var_index].var_name);
+        emit_partial_asm(":");
+        emit_partial_explanation("label for global variable");
+        if(types[global_vars[var_index].type_id].type_size == 8) {
+            emit_partial_indent();
+            emit_partial_asm(".quad ");
+            emit_partial_num(global_vars[var_index].initial_value);
+            emit_partial_explanation("i64 global variable");
+        } else {
+            parse_assert_msg(false, "global variable size not supported");
+        }
+    }
 }
 
 int main(int argc, char const *argv[]) {
     type_i64 = type_get_or_create_integer(8);
     int type_void = type_get_or_create_integer(0);
+    type_void_pointer = type_get_or_create_pointer(type_void);
 
     type_add_name(type_i64, "int");
     type_add_name(type_i64, "i64");
