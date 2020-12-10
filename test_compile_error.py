@@ -14,6 +14,8 @@ if not NO_MAKE:
 
 failed_a_test = False
 
+test_pass_output = []
+
 for test_file_name in os.listdir(COMPILE_TEST_DIR):
     if test_file_name.endswith('.expected'): continue
     with open(os.path.join(COMPILE_TEST_DIR, test_file_name)) as test_file:
@@ -37,6 +39,7 @@ for test_file_name in os.listdir(COMPILE_TEST_DIR):
         print_verbose_dbg_info()
 
     num_expectations_passed = 0
+    failed_this_test = False
     with open(os.path.join(COMPILE_TEST_DIR, test_file_name)) as test_file:
         for line_num, line in enumerate(test_file):
             if 'EXPECT ' not in line: continue
@@ -46,12 +49,12 @@ for test_file_name in os.listdir(COMPILE_TEST_DIR):
             if cmd == 'stderr':
                 if contents.strip() not in stderr_decoded:
                     print("!!! On test", test_file_name, "failed to find contents of expectation on line", line_num + 1)
-                    failed_a_test = True
+                    failed_this_test = True
                     break
             elif cmd == 'rc':
                 if (captured_output.returncode == 0) ^ (contents == '0'):
                     print("!!! Wrong compiler return code", test_file_name, "line", line_num)
-                    failed_a_test = True
+                    failed_this_test = True
                     break
             elif cmd == 'dbg':
                 print_verbose_dbg_info()
@@ -59,9 +62,16 @@ for test_file_name in os.listdir(COMPILE_TEST_DIR):
                 assert False, "command " + cmd + " not known in " + test_file_name
             num_expectations_passed += 1
         else:
-            print('✔' * num_expectations_passed, '\t', num_expectations_passed, "test(s) passed on", test_file_name)
+            test_pass_output.append(
+                f"{'✔' * num_expectations_passed}\t{num_expectations_passed} test(s) passed on {test_file_name}"
+            )
             if not num_expectations_passed:
                 print_verbose_dbg_info()
+    if failed_this_test:
+        print_verbose_dbg_info()
+    failed_a_test = failed_a_test or failed_this_test
+
+print(*test_pass_output, sep='\n')
 
 if failed_a_test:
     sys.exit(1)
