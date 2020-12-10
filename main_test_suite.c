@@ -328,6 +328,23 @@ int complicated_control_structure_test() {
     }
 }
 
+
+int global_array_1[10];
+
+int global_arrays_test() {
+    supplement_assert((int) global_array_1 > 20);
+    supplement_assert(*global_array_1 == 0);
+    *global_array_1 = 420;
+    supplement_assert(*global_array_1 == 420);
+    *(global_array_1 + 1) = 422;
+    supplement_assert(*(global_array_1 + 1) == 422);
+    supplement_assert(*global_array_1 == 420);
+    *(global_array_1 + 9) = 93;
+    supplement_assert(*(global_array_1 + 1) == 422);
+    supplement_assert(*(global_array_1 + 9) == 93);
+    supplement_assert(*global_array_1 == 420);
+}
+
 int do_test() {
     do_basic_arithmetic_test();
     do_basic_arithmetic_test_with_vars();
@@ -343,6 +360,7 @@ int do_test() {
     shadowing_local_test_1();
     shadowing_local_test_2();
     complicated_control_structure_test();
+    global_arrays_test();
 
     supplement_print_nl();
 }

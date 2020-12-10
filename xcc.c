@@ -12,6 +12,8 @@
         ENUMERATE_TOKEN(R_PAREN) \
         ENUMERATE_TOKEN(L_BRACE) \
         ENUMERATE_TOKEN(R_BRACE) \
+        ENUMERATE_TOKEN(L_SQUARE) \
+        ENUMERATE_TOKEN(R_SQUARE) \
         ENUMERATE_TOKEN(NUM) \
         ENUMERATE_TOKEN(SEMI) \
         ENUMERATE_TOKEN(WHITESPACE) \
@@ -168,6 +170,10 @@ void characterise_token() {
         current_token_type = TOK_L_BRACE;
     } else if(tok_is_single_char('}')) {
         current_token_type = TOK_R_BRACE;
+    } else if(tok_is_single_char('[')) {
+        current_token_type = TOK_L_SQUARE;
+    } else if(tok_is_single_char(']')) {
+        current_token_type = TOK_R_SQUARE;
     } else if(tok_is_single_char(';')) {
         current_token_type = TOK_SEMI;
     } else if(tok_is_num()) {
@@ -466,7 +472,9 @@ struct {
 int global_funcs_len = 0;
 
 struct {
-    int type_id;
+    int array_size; // size in elemnts of the array, or -1 if var is not an array
+    int type_id; // the type of the pointer to which the array decays to if the
+                 // var is an array, otherwise just the type
     char var_name[MAX_VAR_LEN + 1];
     int initial_value;
 } global_vars[VAR_LIST_MAX_LEN + 1];
@@ -510,6 +518,8 @@ bool can_convert_between_types(int actual, int expected) {
     return false;
 }
 
+void val_place_rax(int type_id);
+
 void val_pop_rvalue_rax(int expected_type_id) {
     int value_pos_in_stack = next_value_stack_entry_num - 1;
     assert(value_pos_in_stack >= 0);
@@ -545,22 +555,32 @@ void val_pop_rvalue_rax(int expected_type_id) {
         parse_assert(underlying_value_index == value_pos_in_stack - 1);
         next_value_stack_entry_num--; // pop off value stack so pointer can be placed into %rax
 
-        assert(types[actual_type_id].type_type == TypePointer);
-        val_pop_rvalue_rax(types[actual_type_id].underlying_type_num);
+        parse_assert(types[value_stack[underlying_value_index].type_id].type_type == TypePointer);
+        val_pop_rvalue_rax(value_stack[underlying_value_index].type_id);
         // the pointer to the value should now be in %rax
 
         emit_line("movq (%rax), %rax", "derefence value", true);
+        val_place_rax(actual_type_id);
         next_value_stack_entry_num--;
     } else if(value_type == ValueTypeRAX) {
         // well that was easy...
         next_value_stack_entry_num--;
     } else if(value_type == ValueTypeGlobalVar) {
-        parse_assert(types[actual_type_id].type_size == 8);
-        emit_partial_indent();
-        emit_partial_asm("movq ");
-        emit_partial_asm(global_vars[value_stack[value_pos_in_stack].data].var_name);
-        emit_partial_asm(", %rax");
-        emit_partial_explanation("load global variable into %rax");
+        int var_index = value_stack[value_pos_in_stack].data;
+        if(global_vars[var_index].array_size != -1) {
+            emit_partial_indent();
+            emit_partial_asm("movq $");
+            emit_partial_asm(global_vars[value_stack[value_pos_in_stack].data].var_name);
+            emit_partial_asm(", %rax");
+            emit_partial_explanation("load global variable into %rax");
+        } else {
+            parse_assert(types[actual_type_id].type_size == 8);
+            emit_partial_indent();
+            emit_partial_asm("movq ");
+            emit_partial_asm(global_vars[value_stack[value_pos_in_stack].data].var_name);
+            emit_partial_asm(", %rax");
+            emit_partial_explanation("load global variable into %rax");
+        }
         next_value_stack_entry_num--;
     } else {
         assert(false);
@@ -588,6 +608,14 @@ void val_place_global_var(int var_index, int type_id) {
     value_stack[next_value_stack_entry_num].type_id = type_id;
     value_stack[next_value_stack_entry_num].value_type = ValueTypeGlobalVar;
     value_stack[next_value_stack_entry_num].data = var_index;
+    next_value_stack_entry_num++;
+}
+
+void val_place_memory(int type_id) {
+    assert(next_value_stack_entry_num < VALUE_STACK_SIZE);
+    value_stack[next_value_stack_entry_num].type_id = type_id;
+    value_stack[next_value_stack_entry_num].value_type = ValueTypeMemory;
+    value_stack[next_value_stack_entry_num].data = next_value_stack_entry_num - 1;
     next_value_stack_entry_num++;
 }
 
@@ -794,6 +822,20 @@ void parse_unary_expression() {
         emit_line("movq $0, %rax", "unary not operator (zero out)", true);
         emit_line("setz %al", "unary not operator (set if ZF, upper bits already zerod)", true);
         val_place_rax(type_i64);
+    } else if(accept(TOK_STAR)) {
+        // pointer dereference
+        parse_unary_expression();
+        parse_assert(next_value_stack_entry_num > 0);
+
+        int top_value_type = value_stack[next_value_stack_entry_num - 1].type_id;
+        if(types[top_value_type].type_type != TypePointer) {
+            fprintf(stderr, "Needed a pointer to dereferefence, but got a ");
+            type_print_to_stderr(top_value_type);
+            fprintf(stderr, "!\n");
+            parse_assert(types[top_value_type].type_type == TypePointer);
+        }
+
+        val_place_memory(types[top_value_type].underlying_type_num);
     } else {
         parse_primary_expression();
     }
@@ -974,6 +1016,7 @@ void parse_assignment_expression() {
 
             val_place_rax(top_value_type_id);
         } else if(top_value_value_type == ValueTypeGlobalVar) {
+            parse_assert_msg(global_vars[top_value_data].array_size == -1, "cannot directly assign to global array");
             parse_or_expression();
             val_pop_rvalue_rax(top_value_type_id);
 
@@ -981,6 +1024,19 @@ void parse_assignment_expression() {
             emit_partial_asm("movq %rax, ");
             emit_partial_asm(global_vars[top_value_data].var_name);
             emit_partial_explanation("global variable set");
+
+            val_place_rax(top_value_type_id);
+        } else if(top_value_value_type == ValueTypeMemory) {
+            // top value already popped off
+            val_pop_rvalue_rax(value_stack[next_value_stack_entry_num - 1].type_id);
+            emit_line("pushq %rax", "push %rax in prep for dereferenced assignment", true);
+
+            parse_or_expression();
+            val_pop_rvalue_rax(top_value_type_id);
+
+            emit_partial_indent();
+            emit_line("popq %rcx", "pop address to lhs of assignment", true);
+            emit_line("movq %rax, (%rcx)", "peform derefed assignment", true);
 
             val_place_rax(top_value_type_id);
         } else {
@@ -1017,6 +1073,10 @@ void parse_blocks_inner() {
 }
 
 void pop_val_stack_to_0() {
+    // strip back any ValueTypeMemory, as they don't actually count
+    while(next_value_stack_entry_num > 0 && value_stack[next_value_stack_entry_num - 1].value_type == ValueTypeMemory) {
+        next_value_stack_entry_num--;
+    }
     if(next_value_stack_entry_num != 1) {
         fprintf(stderr, "Value stack is offset: %d!\n", next_value_stack_entry_num);
         parse_assert(next_value_stack_entry_num == 1);
@@ -1259,6 +1319,7 @@ void parse_global_variable(int type_id, const char *var_name) {
 
     strncpy(global_vars[var_index].var_name, var_name, MAX_VAR_LEN);
     global_vars[var_index].var_name[MAX_VAR_LEN - 1] = '\0';
+    global_vars[var_index].array_size = -1;
 
     if(accept(TOK_EQUALS)) {
         // TODO: call parse_expression() and not just accept integers.
@@ -1268,9 +1329,18 @@ void parse_global_variable(int type_id, const char *var_name) {
         // this doesn't matter.
 
         parse_assert_msg(current_token_type == TOK_NUM, "expected number literal for assignment to global variable");
-        int final_value = atoi(current_token_expansion);
-        global_vars[var_index].initial_value = final_value;
+        int initial_value = atoi(current_token_expansion);
+        global_vars[var_index].initial_value = initial_value;
         expect(TOK_NUM);
+    } else if(accept(TOK_L_SQUARE)) {
+        parse_assert_msg(current_token_type == TOK_NUM, "expected number literal for global variable array size");
+        int array_size = atoi(current_token_expansion);
+        parse_assert_msg(array_size > 0, "array size of global var must be positive");
+        expect(TOK_NUM);
+        expect(TOK_R_SQUARE);
+        global_vars[var_index].type_id = type_get_or_create_pointer(type_id);
+        global_vars[var_index].array_size = array_size;
+        global_vars[var_index].initial_value = 0;
     } else {
         global_vars[var_index].initial_value = 0;
     }
@@ -1288,7 +1358,7 @@ void parse_top_level_statement() {
 
     if(accept(TOK_L_PAREN)) {
         parse_function(type_id, object_name);
-    } else if(current_token_type == TOK_EQUALS || current_token_type == TOK_SEMI) {
+    } else if(current_token_type == TOK_EQUALS || current_token_type == TOK_SEMI || current_token_type == TOK_L_SQUARE) {
         // simple global variable
         parse_global_variable(type_id, object_name);
     }
@@ -1309,7 +1379,14 @@ void parse_program() {
         emit_partial_asm(global_vars[var_index].var_name);
         emit_partial_asm(":");
         emit_partial_explanation("label for global variable");
-        if(types[global_vars[var_index].type_id].type_size == 8) {
+        if(global_vars[var_index].array_size != -1) {
+            int underlying_type = types[global_vars[var_index].type_id].underlying_type_num;
+            int underlying_size = types[underlying_type].type_size;
+            emit_partial_indent();
+            emit_partial_asm(".zero ");
+            emit_partial_num(underlying_size * global_vars[var_index].array_size);
+            emit_partial_explanation("i64 global array");
+        } else if(types[global_vars[var_index].type_id].type_size == 8) {
             emit_partial_indent();
             emit_partial_asm(".quad ");
             emit_partial_num(global_vars[var_index].initial_value);

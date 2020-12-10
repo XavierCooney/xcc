@@ -11,7 +11,7 @@ dbg: xcc main_test_suite.c
 	gdb ./xcc
 
 xcc: xcc.c
-	gcc -fsanitize=undefined -Wall -Werror -ggdb xcc.c -o xcc -std=gnu11
+	gcc -fsanitize=undefined -fno-sanitize-recover -Wall -Werror -ggdb xcc.c -o xcc -std=gnu11
 
 assembly.S: xcc main_test_suite.c
 	./xcc < main_test_suite.c > assembly_temp.S
