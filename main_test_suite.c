@@ -129,7 +129,7 @@ int pointer_parsing_inner(int *a, int b, int *c, int **d, int e) {
     supplement_assert((int) a == 5);
     supplement_assert((int) b == 8);
     supplement_assert((int) c == 11);
-    supplement_assert((int) d == 2);
+    supplement_assert((int) d == 12);
     supplement_assert(e == 40);
 }
 
@@ -248,7 +248,7 @@ int test_return_type_sigs() {
     int **b = return_type_test_int_star_star(4);
 
     supplement_assert((int) a == 3);
-    supplement_assert((int) b == 3);
+    supplement_assert((int) b == 4);
 }
 
 int empty_function() {
@@ -359,8 +359,13 @@ int do_test() {
     do_globals_test_1();
     shadowing_local_test_1();
     shadowing_local_test_2();
+    zeroed_global_var_2_test();
     complicated_control_structure_test();
     global_arrays_test();
+    test_return_type_sigs();
+    pointer_passing_outer();
+    more_tests();
+    argument_passing_test();
 
     supplement_print_nl();
 }
