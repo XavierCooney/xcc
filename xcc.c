@@ -804,6 +804,40 @@ void parse_primary_expression() {
     }
 }
 
+void parse_array_access_expression() {
+    // Experimentally, it seems that the [] operator
+    // binds more tightly than *. Of course using them
+    // in an ambiguous scenario is weird to begin with.
+    parse_primary_expression();
+
+    while(accept(TOK_L_SQUARE)) {
+        parse_assert(next_value_stack_entry_num > 0);
+        int lhs_type = value_stack[next_value_stack_entry_num - 1].type_id;
+        if(types[lhs_type].type_type != TypePointer) {
+            fprintf(stderr, "Needed a pointer to do array access on, but got a ");
+            type_print_to_stderr(lhs_type);
+            fprintf(stderr, "!\n");
+            parse_assert(types[lhs_type].type_type == TypePointer);
+        }
+
+        val_pop_rvalue_rax(lhs_type);
+        emit_line("pushq %rax", "save rax (array) for access", true);
+        parse_expression();
+        val_pop_rvalue_rax(type_i64);
+
+        emit_line("popq %rcx", "retrieve first operand for addition/subtraction", true);
+        emit_partial_indent();
+        emit_partial_asm("leaq (%rcx,%rax,");
+        emit_partial_num(types[types[lhs_type].underlying_type_num].type_size);
+        emit_partial_asm("), %rax");
+        emit_partial_explanation("performan array access");
+
+        val_place_rax(lhs_type);
+        val_place_memory(types[lhs_type].underlying_type_num);
+        expect(TOK_R_SQUARE);
+    }
+}
+
 void parse_unary_expression() {
     if(accept(TOK_TILDE)) {
         parse_unary_expression();
@@ -837,7 +871,7 @@ void parse_unary_expression() {
 
         val_place_memory(types[top_value_type].underlying_type_num);
     } else {
-        parse_primary_expression();
+        parse_array_access_expression();
     }
 }
 

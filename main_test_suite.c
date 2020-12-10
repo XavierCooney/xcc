@@ -331,7 +331,7 @@ int complicated_control_structure_test() {
 
 int global_array_1[10];
 
-int global_arrays_test() {
+int global_arrays_test_1() {
     supplement_assert((int) global_array_1 > 20);
     supplement_assert(*global_array_1 == 0);
     *global_array_1 = 420;
@@ -343,6 +343,22 @@ int global_arrays_test() {
     supplement_assert(*(global_array_1 + 1) == 422);
     supplement_assert(*(global_array_1 + 9) == 93);
     supplement_assert(*global_array_1 == 420);
+}
+
+int global_array_2[10];
+
+int global_arrays_test_2() {
+    // supplement_assert((int) global_array_2 > 20);
+    supplement_assert(global_array_2[0] == 0);
+    global_array_2[0] = 420;
+    supplement_assert(global_array_2[0] == 420);
+    global_array_2[1] = 422;
+    supplement_assert(global_array_2[1] == 422);
+    supplement_assert(global_array_2[0] == 420);
+    global_array_2[9] = 93;
+    supplement_assert(global_array_2[1] == 422);
+    supplement_assert(global_array_2[9] == 93);
+    supplement_assert(global_array_2[0] == 420);
 }
 
 int do_test() {
@@ -361,7 +377,8 @@ int do_test() {
     shadowing_local_test_2();
     zeroed_global_var_2_test();
     complicated_control_structure_test();
-    global_arrays_test();
+    global_arrays_test_1();
+    global_arrays_test_2();
     test_return_type_sigs();
     pointer_passing_outer();
     more_tests();
