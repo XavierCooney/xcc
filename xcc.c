@@ -681,7 +681,7 @@ void parse_primary_expression() {
 
             int arg_num = 0;
             while(current_token_type != TOK_R_PAREN && current_token_type != TOK_T_EOF) {
-                parse_assert(arg_num < num_args);
+                parse_assert_msg(arg_num < num_args, "too many arguments in function call");
 
                 parse_expression();
                 val_pop_rvalue_rax(arg_types[arg_num]); // TODO: support non-i64 arguments
@@ -705,6 +705,7 @@ void parse_primary_expression() {
                 }
                 ++arg_num;
             }
+            parse_assert_msg(arg_num == num_args, "too few arguments in func call");
             expect(TOK_R_PAREN);
 
             emit_partial_indent();
