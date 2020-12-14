@@ -7,6 +7,7 @@ int supplement_print_int(int v);
 int supplement_print_nl();
 int supplement_print_char(int c);
 int supplement_print_stats();
+int supplement_puts(char *s);
 
 int fib(int n);
 
@@ -361,6 +362,17 @@ int global_arrays_test_2() {
     supplement_assert(global_array_2[0] == 420);
 }
 
+int string_test() {
+    char* string = "Oh HAI";
+    supplement_assert((int) (string[0]) == 79);
+    supplement_assert((int) (string[1]) == 104);
+    supplement_assert((int) (string[2]) == 32);
+    supplement_assert((int) (string[3]) == 72);
+    supplement_assert((int) (string[4]) == 65);
+    supplement_assert((int) (string[5]) == 73);
+    supplement_assert((int) (string[6]) == 0);
+}
+
 int do_test() {
     do_basic_arithmetic_test();
     do_basic_arithmetic_test_with_vars();
@@ -389,6 +401,7 @@ int do_test() {
 
 int main() {
     hello_world_putchar();
+    supplement_puts("Hello world again!?");
     do_test();
     supplement_print_stats();
     return 0;

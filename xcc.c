@@ -36,6 +36,7 @@
         ENUMERATE_TOKEN(DOUBLE_EQUALS) \
         ENUMERATE_TOKEN(COMMA) \
         ENUMERATE_TOKEN(EXCLAMATION_EQUALS) \
+        ENUMERATE_TOKEN(STRING) \
         ENUMERATE_TOKEN(T_EOF) \
         ENUMERATE_TOKEN(UNKNOWN) \
 
@@ -146,6 +147,21 @@ bool tok_is_comment() {
     return false;
 }
 
+bool tok_is_string() {
+    if(current_token_contents[0] == '"') {
+        if(current_token_contents[1] == '\0') {
+            return true;
+        } else {
+            int i = 1;
+            while(current_token_contents[i] && current_token_contents[i] != '"') {
+                ++i;
+            }
+            return current_token_contents[i] == '\0' || (current_token_contents[i] == '"' && current_token_contents[i + 1] == '\0');
+        }
+    }
+    return false;
+}
+
 bool tok_is_keyword(const char *keyword) {
     return !strcmp(current_token_expansion, keyword);
 }
@@ -178,6 +194,8 @@ void characterise_token() {
         current_token_type = TOK_SEMI;
     } else if(tok_is_num()) {
         current_token_type = TOK_NUM;
+    } else if(tok_is_string()) {
+        current_token_type = TOK_STRING;
     } else if(tok_is_whitespace()) {
         current_token_type = TOK_WHITESPACE;
     } else if(tok_is_single_char(EOF)) {
@@ -477,8 +495,15 @@ struct {
                  // var is an array, otherwise just the type
     char var_name[MAX_VAR_LEN + 1];
     int initial_value;
+    bool is_string;
 } global_vars[VAR_LIST_MAX_LEN + 1];
 int global_vars_len = 0;
+
+struct {
+    char string_contents[MAX_TOK_EXPANSION_LEN + 5]; // must be longer than a token length to avoid overruns
+    int var_index;
+} string_table[VAR_LIST_MAX_LEN + 1];
+int string_table_len = 0;
 
 struct {
     char name[MAX_VAR_LEN];
@@ -680,6 +705,35 @@ void parse_primary_expression() {
         int literal_value = atoi(current_token_expansion);
         val_place_constant(literal_value, type_i64);
         expect(TOK_NUM);
+    } else if(current_token_type == TOK_STRING) {
+        // TODO: better string parsing
+        // TODO: check if string already exists, and if so, use that one
+        int var_index = global_vars_len;
+        global_vars_len++;
+
+        int type_id = type_get_or_create_pointer(type_get_or_create_integer(1));
+        global_vars[var_index].type_id = type_id;
+        global_vars[var_index].is_string = true;
+
+        snprintf(global_vars[var_index].var_name, MAX_VAR_LEN, "_xcc_str_%d", generate_local_label());
+
+        int string_table_index = string_table_len;
+        assert(string_table_len < VAR_LIST_MAX_LEN);
+        string_table_len++;
+        int string_value_index = 0;
+        for(int i = 1; current_token_contents[i] && i < MAX_TOK_LEN; ++i) {
+            string_table[string_table_index].string_contents[string_value_index] = current_token_contents[i];
+            string_value_index++;
+        }
+        assert(string_value_index > 0);
+        string_table[string_table_index].string_contents[string_value_index - 1] = '\0'; // replace ending "
+
+        string_table[string_table_index].var_index = var_index;
+        global_vars[var_index].array_size = strlen(string_table[string_table_index].string_contents);
+        global_vars[var_index].initial_value = string_table_index;
+
+        val_place_global_var(var_index, type_id);
+        accept(TOK_STRING);
     } else if(current_token_type == TOK_IDENT) {
         char ident_contents[TOK_EXPANSION_BUF_LEN];
 
@@ -1354,6 +1408,7 @@ void parse_global_variable(int type_id, const char *var_name) {
     strncpy(global_vars[var_index].var_name, var_name, MAX_VAR_LEN);
     global_vars[var_index].var_name[MAX_VAR_LEN - 1] = '\0';
     global_vars[var_index].array_size = -1;
+    global_vars[var_index].is_string = false;
 
     if(accept(TOK_EQUALS)) {
         // TODO: call parse_expression() and not just accept integers.
@@ -1413,7 +1468,15 @@ void parse_program() {
         emit_partial_asm(global_vars[var_index].var_name);
         emit_partial_asm(":");
         emit_partial_explanation("label for global variable");
-        if(global_vars[var_index].array_size != -1) {
+        if(global_vars[var_index].is_string) {
+            int string_index = global_vars[var_index].initial_value;
+            for(int i = 0; string_table[string_index].string_contents[i]; ++i) {
+                emit_partial_indent();
+                emit_partial_asm(".byte ");
+                emit_partial_num(string_table[string_index].string_contents[i]);
+                emit_partial_explanation("character in string");
+            }
+        } else if(global_vars[var_index].array_size != -1) {
             int underlying_type = types[global_vars[var_index].type_id].underlying_type_num;
             int underlying_size = types[underlying_type].type_size;
             emit_partial_indent();
@@ -1434,10 +1497,13 @@ void parse_program() {
 int main(int argc, char const *argv[]) {
     type_i64 = type_get_or_create_integer(8);
     int type_void = type_get_or_create_integer(0);
+    int type_i8 = type_get_or_create_integer(1);
     type_void_pointer = type_get_or_create_pointer(type_void);
 
     type_add_name(type_i64, "int");
     type_add_name(type_i64, "i64");
+    type_add_name(type_i8, "char");
+    type_add_name(type_i8, "i8");
     type_add_name(type_void, "void");
 
     if(argc == 2 && !strcmp(argv[1], "t")) {

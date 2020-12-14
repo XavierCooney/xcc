@@ -33,3 +33,6 @@ void supplement_print_char(i64 c) {
     printf("%c", (int) c);
 }
 
+void supplement_puts(const char *s) {
+    puts(s);
+}
