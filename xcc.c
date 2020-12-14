@@ -41,6 +41,17 @@
         ENUMERATE_TOKEN(UNKNOWN) \
 
 
+// Various length constants
+// Most of them are wild over-estimates
+// So they shouldn't be much of a problem
+#define MAX_TOK_LEN 1200
+#define MAX_TOK_EXPANSION_LEN 1200
+#define NUM_TYPES 1024
+#define VALUE_STACK_SIZE 512
+#define VAR_LIST_MAX_LEN 800
+#define MAX_VAR_LEN 40
+#define MAX_FUNC_ARGS 15
+
 
 enum Token {
     #undef ENUMERATE_TOKEN
@@ -63,12 +74,9 @@ struct {
 };
 
 
-#define MAX_TOK_LEN 1600
-#define MAX_TOK_EXPANSION_LEN 120
 
 int last_non_accepted_char = '\0';
 int current_token_contents[MAX_TOK_LEN + 5];
-#define TOK_EXPANSION_BUF_LEN (MAX_TOK_EXPANSION_LEN + 10)
 char current_token_expansion[MAX_TOK_EXPANSION_LEN + 10];
 int current_token_type;
 
@@ -289,7 +297,7 @@ void lex_token() {
             }
             current_token_contents[++current_token_len] = c;
             current_token_contents[current_token_len + 1] = '\0';
-            assert(current_token_len < MAX_TOK_LEN);
+            assert(current_token_len < MAX_TOK_LEN); // TODO: not priority, but make this a parse_assert
         }
     }
 }
@@ -375,11 +383,6 @@ void emit_epilogue() {
     emit_line("popq %rbp", "function epilogue", true);
 }
 
-#define NUM_TYPES 512
-#define VALUE_STACK_SIZE 512
-#define VAR_LIST_MAX_LEN 800
-#define MAX_VAR_LEN 40
-#define MAX_FUNC_ARGS 15
 
 enum TypeType {
     TypeInteger, TypePointer
@@ -735,10 +738,10 @@ void parse_primary_expression() {
         val_place_global_var(var_index, type_id);
         accept(TOK_STRING);
     } else if(current_token_type == TOK_IDENT) {
-        char ident_contents[TOK_EXPANSION_BUF_LEN];
+        char ident_contents[MAX_TOK_EXPANSION_LEN];
 
-        strncpy(ident_contents, current_token_expansion, TOK_EXPANSION_BUF_LEN);
-        ident_contents[TOK_EXPANSION_BUF_LEN - 1] = '\0';
+        strncpy(ident_contents, current_token_expansion, MAX_TOK_EXPANSION_LEN);
+        ident_contents[MAX_TOK_EXPANSION_LEN - 1] = '\0';
         expect(TOK_IDENT);
 
         if(accept(TOK_L_PAREN)) {
@@ -1440,9 +1443,9 @@ void parse_top_level_statement() {
     int type_id = parse_maybe_type();
     parse_assert(type_id != -1);
 
-    char object_name[TOK_EXPANSION_BUF_LEN];
+    char object_name[MAX_TOK_EXPANSION_LEN];
     parse_assert(current_token_type == TOK_IDENT);
-    strncpy(object_name, current_token_expansion, TOK_EXPANSION_BUF_LEN);
+    strncpy(object_name, current_token_expansion, MAX_TOK_EXPANSION_LEN);
     expect(TOK_IDENT);
 
     if(accept(TOK_L_PAREN)) {

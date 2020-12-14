@@ -28,12 +28,12 @@ for test_file_name in os.listdir(COMPILE_TEST_DIR):
         if verbose_info_printed: return
         verbose_info_printed = True
         print('FILE', test_file_name)
+        print('RETURN CODE')
+        print(captured_output.returncode)
         print('STDERR')
         print(stderr_decoded)
         print('STDOUT')
         print(captured_output.stdout.decode('utf-8'))
-        print('RETURN CODE')
-        print(captured_output.returncode)
 
     if IS_VERBOSE:
         print_verbose_dbg_info()
